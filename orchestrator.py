@@ -1,500 +1,413 @@
-import os
-import json
-import time
+import re
 import uuid
 import threading
-import traceback
+import json
+import os
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Optional
+from typing import Optional, Dict, Any, List
 
-from agents import OLLAMA_MODEL
 from agents import (
-    run_corporate_strategy,
-    run_industry_intelligence,
-    run_target_discovery,
-    run_strategic_synergies,
-    run_technology_evaluation,
-    run_financial_evaluation,
-    run_risk_assessment,
-    run_devils_advocate,
-    run_ma_partner,
+    OLLAMA_MODEL,
+    agent_company_overview, agent_services, agent_locations, agent_clients,
+    agent_financials, agent_leadership, agent_glassdoor_news, agent_workforce,
+    agent_strategic, agent_acquirer_profile, agent_extract_targets, agent_synergy_model,
 )
+from scraper import gather_company_intelligence, discover_acquisition_targets
 
-tasks: Dict[str, Dict[str, Any]] = {}
+tasks: Dict[str, Any] = {}
+
+# ── Simulate data ─────────────────────────────────────────────────────────────
+SIMULATE_PROFILE = {
+    "company": "Avanade Inc.",
+    "overview": {
+        "business_overview": "Avanade is a joint venture between Accenture and Microsoft providing IT services primarily on the Microsoft technology platform. The company employs approximately 60,000 professionals across 26 countries. Revenue is estimated at USD 3.5B for FY2023 per PitchBook. Business is concentrated in enterprise Microsoft Cloud, Security, Modern Workplace, and Business Applications.",
+        "legal_name": "Avanade Inc.", "company_type": "Joint Venture (Accenture 60%, Microsoft 40%)",
+        "year_founded": "2000", "hq": "Seattle, Washington, USA",
+        "global_offices": "AMER: USA (8), Canada (2), Brazil (1) | EMEA: UK (3), Germany (2), France (2) | APAC: Australia (2), Japan (2), India (3), Singapore (1)",
+        "employee_count": "59,000 (LinkedIn, Q1 2025)", "sector_industry": "Information Technology Services — Microsoft Ecosystem",
+        "business_model": "Professional services on time-and-materials and fixed-fee basis for Microsoft platform implementations",
+        "certifications_awards": ["Microsoft Solutions Partner (all 6 solution areas)", "ISO 27001", "SOC 2 Type II"],
+        "website_url": "https://www.avanade.com", "linkedin_url": "https://www.linkedin.com/company/avanade",
+    },
+    "services": {"services_solutions_products": [
+        {"name": "Azure Infrastructure & Cloud", "description": "Cloud migration, architecture, and infrastructure management on Microsoft Azure"},
+        {"name": "Business Applications", "description": "Microsoft Dynamics 365 implementation, customization, and managed support"},
+        {"name": "Modern Workplace", "description": "Microsoft 365 deployment, adoption programs, and endpoint management"},
+        {"name": "Data & AI", "description": "Data platform engineering, analytics, and Azure AI services delivery"},
+        {"name": "Security", "description": "Microsoft Sentinel, Defender, and Entra deployment and managed security"},
+        {"name": "Application Innovation", "description": "Custom application development on Azure and Microsoft development stack"},
+    ]},
+    "locations": {
+        "headquarters": "Seattle, Washington, USA",
+        "amer_offices": ["New York, NY", "Chicago, IL", "Atlanta, GA", "Dallas, TX", "San Francisco, CA", "Toronto, Canada", "São Paulo, Brazil"],
+        "emea_offices": ["London, UK", "Manchester, UK", "Munich, Germany", "Paris, France", "Amsterdam, Netherlands"],
+        "apac_offices": ["Sydney, Australia", "Melbourne, Australia", "Tokyo, Japan", "Bangalore, India", "Singapore"],
+        "delivery_centers": ["Bangalore, India (offshore)", "Manila, Philippines (offshore)", "Monterrey, Mexico (nearshore)"],
+        "parent_company": "Joint venture: Accenture (60%) and Microsoft (40%)",
+    },
+    "clients": {
+        "named_clients": ["Shell", "Unilever", "Nestlé", "Allianz", "Vodafone"],
+        "client_segments": ["Financial Services", "Energy", "Consumer Goods", "Public Sector", "Healthcare"],
+        "anonymous_case_studies": "Referenced",
+    },
+    "financials": {
+        "revenue": "USD 3.5B (FY2023, PitchBook)", "revenue_source": "PitchBook",
+        "revenue_per_employee": "USD 59K",
+        "funding_rounds": [],
+        "acquisitions": [{"company_name": "Fellowmind", "descriptor": "Microsoft partner Nordics and DACH", "year": "2023", "deal_value": "Not disclosed", "headcount_added": "~1,800", "strategic_rationale": "Expand Microsoft Dynamics presence in Northern Europe"}],
+        "key_partnerships": ["Microsoft", "SAP", "Salesforce", "ServiceNow", "UiPath"],
+    },
+    "leadership": {"leaders": [
+        {"full_name": "Rodrigo Caserta", "title": "Chief Executive Officer", "previous_role": "ex-VP Client Services, Avanade LATAM", "accenture_alumni": False},
+        {"full_name": "Adam Warby", "title": "Executive Chairman", "previous_role": "ex-CEO, Avanade", "accenture_alumni": True},
+    ]},
+    "glassdoor_news": {
+        "glassdoor_rating": "3.8", "glassdoor_total_reviews": "4,312",
+        "recent_news": [
+            {"month_year": "February 2025", "description": "Avanade announced expansion of AI practice with 10,000 additional AI-certified professionals target by end of 2025"},
+            {"month_year": "November 2024", "description": "Completed acquisition of Fellowmind, adding approximately 1,800 staff across Nordics and DACH"},
+            {"month_year": "September 2024", "description": "Launched dedicated Microsoft Fabric practice to address enterprise data platform demand"},
+        ],
+    },
+    "workforce": {
+        "functions": [{"function_name": "Information Technology", "percentage": "62%"}, {"function_name": "Consulting", "percentage": "18%"}, {"function_name": "Engineering", "percentage": "9%"}, {"function_name": "Operations", "percentage": "6%"}, {"function_name": "Sales", "percentage": "5%"}],
+        "locations": [{"location": "United States", "percentage": "24%"}, {"location": "India", "percentage": "22%"}, {"location": "United Kingdom", "percentage": "9%"}, {"location": "Australia", "percentage": "7%"}, {"location": "Germany", "percentage": "6%"}],
+        "top_skills": ["Microsoft Azure", "Microsoft Dynamics 365", "Microsoft 365", "DevOps", "Agile", "Power BI", "C#", "Python", "Cybersecurity"],
+        "open_positions": "1,847",
+    },
+    "strategic": {
+        "strategic_strengths": ["Exclusive deep access to Microsoft product teams", "Multi-region delivery at scale", "Accenture and Microsoft dual-channel sales"],
+        "key_risks": ["Concentrated dependency on Microsoft platform", "Parent JV ownership limits exit options", "High attrition in offshore delivery centers"],
+        "strategic_fit_for_accenture": "Avanade already operates under 60% Accenture ownership. Microsoft platform depth — Dynamics 365, Azure, Security — complements Accenture's multi-cloud practice. Nordic and DACH coverage via Fellowmind fills a geographic gap for Accenture's SAP-adjacent Dynamics pipeline. Public Sector client base in North America and Europe aligns with Accenture Federal Services.",
+        "ma_suitability": "Full acquisition requires Microsoft consent given its 40% stake. Valuation likely reflects 1.5–2.5x revenue multiple for a services-only firm. The commercially rational path is a structured buyout of Microsoft's 40% to consolidate Avanade onto Accenture's books. Deal complexity is high given JV governance constraints.",
+    },
+}
+
+SIMULATE_DISCOVERY = {
+    "acquirer": "Accenture",
+    "thesis": {"sector": "Microsoft Dynamics consulting", "geography": "DACH + Nordics", "capability_gap": "SAP to Dynamics migration", "revenue_range": "$50M–$300M"},
+    "targets": [
+        {
+            "company": "Fellowmind",
+            "overview": {"business_overview": "Fellowmind is a Microsoft partner focused on business transformation using Microsoft technology stack in the Nordics and DACH region.", "legal_name": "Fellowmind", "company_type": "Private (PE-backed)", "year_founded": "2019", "hq": "Copenhagen, Denmark", "global_offices": "EMEA: Denmark (1), Sweden (1), Germany (2), Netherlands (1), Poland (1)", "employee_count": "1,800 (LinkedIn, Q1 2025)", "sector_industry": "IT Services — Microsoft Dynamics consulting", "business_model": "Fixed-price and time-and-materials Microsoft Dynamics 365 and Azure implementations", "certifications_awards": ["Microsoft Solutions Partner"], "website_url": "https://www.fellowmind.com", "linkedin_url": "https://www.linkedin.com/company/fellowmind"},
+            "services": {"services_solutions_products": [{"name": "Microsoft Dynamics 365", "description": "ERP and CRM implementation across finance, supply chain, and sales modules"}, {"name": "Azure Cloud", "description": "Migration and managed services on Microsoft Azure"}, {"name": "Power Platform", "description": "Power Apps, Power BI, and Power Automate delivery"}]},
+            "locations": {"headquarters": "Copenhagen, Denmark", "amer_offices": [], "emea_offices": ["Stockholm, Sweden", "Munich, Germany", "Frankfurt, Germany", "Amsterdam, Netherlands", "Warsaw, Poland"], "apac_offices": [], "delivery_centers": ["Warsaw, Poland (nearshore)"], "parent_company": "EQT-backed (PE ownership)"},
+            "clients": {"named_clients": ["Vestas", "Ørsted", "Hempel"], "client_segments": ["Manufacturing", "Energy", "Financial Services"], "anonymous_case_studies": "Referenced"},
+            "financials": {"revenue": "EUR 180M (FY2023, PitchBook)", "revenue_source": "PitchBook", "revenue_per_employee": "USD 100K", "funding_rounds": [{"date": "2021-03", "round_type": "PE Buyout", "amount": "Not disclosed", "lead_investors": "EQT"}], "acquisitions": [], "key_partnerships": ["Microsoft", "Orion", "Continia"]},
+            "leadership": {"leaders": [{"full_name": "Søren Dalsgaard", "title": "Chief Executive Officer", "previous_role": "ex-CEO, Sunrise Technologies", "accenture_alumni": False}]},
+            "glassdoor_news": {"glassdoor_rating": "4.1", "glassdoor_total_reviews": "312", "recent_news": [{"month_year": "November 2024", "description": "Acquired by Avanade as part of expansion into DACH and Nordic Microsoft Dynamics market"}, {"month_year": "June 2023", "description": "Expanded into Poland with nearshore delivery center acquisition"}]},
+            "workforce": {"functions": [{"function_name": "Information Technology", "percentage": "70%"}, {"function_name": "Consulting", "percentage": "20%"}, {"function_name": "Operations", "percentage": "10%"}], "locations": [{"location": "Denmark", "percentage": "30%"}, {"location": "Germany", "percentage": "25%"}, {"location": "Poland", "percentage": "20%"}, {"location": "Netherlands", "percentage": "15%"}], "top_skills": ["Microsoft Dynamics 365", "Power Platform", "Azure", "F&O", "D365 CE"], "open_positions": "47"},
+            "strategic": {"strategic_strengths": ["Deep Dynamics 365 F&O specialization", "Strong Nordic manufacturing client base", "Nearshore Poland delivery center"], "key_risks": ["PE ownership may inflate acquisition price", "Single-platform concentration risk", "Key-person dependency in Dynamics practice"], "strategic_fit_for_accenture": "Fellowmind provides Accenture with established Nordic and DACH Dynamics 365 delivery capacity. Its manufacturing and energy client base is underserved by Accenture's current SAP-heavy ERP practice in those markets. The Poland nearshore center complements Accenture's existing Eastern European delivery footprint.", "ma_suitability": "PE-backed at EQT, making it an available asset. Revenue of EUR 180M at an estimated 1.8x–2.5x revenue multiple implies a deal range of EUR 324M–450M. Integration complexity is medium given operational independence and geographic focus. Primary value is speed-to-market in DACH Dynamics 365 versus organic build."},
+            "synergy": {"total_low_usd_m": 28, "total_high_usd_m": 52, "synergy_items": [{"synergy_type": "Revenue — cross-sell", "basis": "Accenture Dynamics practice upsell into Fellowmind's 3 named enterprise clients", "estimated_value_low_usd_m": 8, "estimated_value_high_usd_m": 18, "confidence_level": "Medium", "year_realizable": 2}, {"synergy_type": "Revenue — capability fill", "basis": "Accenture SAP clients migrating to Dynamics 365 in DACH; Fellowmind fills gap", "estimated_value_low_usd_m": 15, "estimated_value_high_usd_m": 28, "confidence_level": "Medium", "year_realizable": 2}, {"synergy_type": "Cost — headcount consolidation", "basis": "~15% G&A overlap on 1,800 headcount at est. USD 80K fully loaded", "estimated_value_low_usd_m": 5, "estimated_value_high_usd_m": 6, "confidence_level": "High", "year_realizable": 1}], "client_overlap": [], "geography_overlap": ["Germany"], "capability_gaps_filled": ["Microsoft Dynamics 365 F&O in DACH", "Nordic manufacturing sector coverage", "Nearshore Poland delivery"], "key_assumptions": ["Accenture retains full Fellowmind management team post-close", "No client attrition in year 1", "EQT seller willing to exit at 2.0–2.5x revenue", "Poland center maintained at current scale", "D365 F&O demand in DACH grows 15% YoY"], "deal_structure": "Full acquisition", "suggested_ev_revenue_multiple": "1.8x–2.5x (comparable: Coreview 2.1x, Sunrise Technologies 2.3x)", "integration_complexity": "Medium — geographically distinct from Accenture core, requires partner ecosystem alignment", "headline_rationale": "Fellowmind gives Accenture an immediate, established Dynamics 365 presence in the DACH and Nordic markets at lower risk than organic build."},
+        }
+    ],
+}
 
 
-def calculate_synergy_score(
-    strategic_fit: float,
-    revenue_synergy: float,
-    product_synergy: float,
-    technology_synergy: float,
-    customer_synergy: float,
-    geographic_synergy: float,
-    financial_feasibility: float,
-    risk_score: float,
-    cultural_compatibility: float,
-) -> float:
-    raw = (
-        (strategic_fit * 0.20)
-        + (revenue_synergy * 0.15)
-        + (product_synergy * 0.10)
-        + (technology_synergy * 0.10)
-        + (customer_synergy * 0.10)
-        + (geographic_synergy * 0.10)
-        + (financial_feasibility * 0.10)
-        + ((10 - risk_score) * 0.10)
-        + (cultural_compatibility * 0.05)
-    )
-    return round(max(0.0, min(10.0, raw)) * 10.0, 1)
+# ── Persistence ───────────────────────────────────────────────────────────────
+def _save(task_id: str):
+    os.makedirs("projects", exist_ok=True)
+    path = os.path.join("projects", f"{task_id}.json")
+    try:
+        with open(path, "w") as f:
+            json.dump(tasks[task_id], f, indent=2)
+    except Exception as e:
+        print(f"[orch] Save failed for {task_id}: {e}")
 
 
-def _evaluate_target(model: Optional[str], acquirer: str, target: Dict[str, Any], strategy: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Agent execution order per target:
-      4. Technology  ┐
-      5. Financial   ├─ parallel
-      6. Risk        ┘
-      7. Strategic Synergies  (sequential — after above)
-      8. Devil's Advocate     (sequential — needs risk + financial)
-    """
+def _log(task_id: str, msg: str, progress: int, agent: str = ""):
+    tasks[task_id]["logs"].append(msg)
+    tasks[task_id]["progress"] = progress
+    if agent:
+        tasks[task_id]["current_agent"] = agent
+    safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
+    print(f"[{task_id[:8]}] {progress}% {safe_msg}")
+
+
+# ── Intelligence profile pipeline ─────────────────────────────────────────────
+def _profile_company(task_id: str, company: str, model: str, scraped: Dict, base_progress: int = 0, progress_range: int = 90) -> Dict:
+    """Run full 9-agent intelligence profile. Returns results dict."""
+
+    step = progress_range // 10
+
+    _log(task_id, f"Agent 1: Company Profile — running", base_progress + step, "Agent 1 · Company Profile")
+    overview = agent_company_overview(model, company, scraped)
+    _log(task_id, "Agent 1: Company Profile — complete", base_progress + step * 2, "Agent 1 · Company Profile")
+
+    _log(task_id, "Agent 2: Services & Products — running", base_progress + step * 2, "Agent 2 · Services & Products")
+    services = agent_services(model, company, scraped)
+    _log(task_id, "Agent 2: Services & Products — complete", base_progress + step * 3, "Agent 2 · Services & Products")
+
+    _log(task_id, "Agents 3–8: Parallel research — running", base_progress + step * 3, "Agents 3–8 · Parallel Research")
+
+    def run_loc():  return agent_locations(model, company, scraped)
+    def run_cli():  return agent_clients(model, company, scraped)
+    def run_fin():  return agent_financials(model, company, scraped)
+    def run_lead(): return agent_leadership(model, company, scraped)
+    def run_gd():   return agent_glassdoor_news(model, company, scraped)
+    def run_wf():   return agent_workforce(model, company, scraped)
+
     with ThreadPoolExecutor(max_workers=3) as pool:
-        f_tech = pool.submit(run_technology_evaluation, model, acquirer, target, strategy)
-        f_fin  = pool.submit(run_financial_evaluation,  model, acquirer, target, inputs)
-        f_risk = pool.submit(run_risk_assessment,       model, acquirer, target)
+        futures = {
+            pool.submit(run_loc):  "locations",
+            pool.submit(run_cli):  "clients",
+            pool.submit(run_fin):  "financials",
+            pool.submit(run_lead): "leadership",
+            pool.submit(run_gd):   "glassdoor_news",
+            pool.submit(run_wf):   "workforce",
+        }
+        res = {}
+        for future in as_completed(futures):
+            key = futures[future]
+            res[key] = future.result()
+            _log(task_id, f"Agent · {key} — complete", min(base_progress + step * 7, tasks[task_id]["progress"] + step), f"Agent · {key}")
 
-        tech     = f_tech.result()
-        financial = f_fin.result()
-        risk     = f_risk.result()
+    locations    = res.get("locations", {})
+    clients      = res.get("clients", {})
+    financials   = res.get("financials", {})
+    leadership   = res.get("leadership", {})
+    glassdoor    = res.get("glassdoor_news", {})
+    workforce    = res.get("workforce", {})
 
-    synergies      = run_strategic_synergies(model, acquirer, target, strategy)
-    devils_advocate = run_devils_advocate(model, acquirer, target, strategy, financial, risk)
-
-    weighted = calculate_synergy_score(
-        strategic_fit=synergies.get("strategic_fit", 5),
-        revenue_synergy=synergies.get("revenue_synergy", {}).get("score", 5),
-        product_synergy=synergies.get("product_synergy", {}).get("score", 5),
-        technology_synergy=tech.get("technology_synergy_score", 5),
-        customer_synergy=synergies.get("customer_synergy", {}).get("score", 5),
-        geographic_synergy=synergies.get("geographic_synergy", {}).get("score", 5),
-        financial_feasibility=financial.get("affordability_score", 5),
-        risk_score=risk.get("risk_score", 5),
-        cultural_compatibility=devils_advocate.get("cultural_compatibility_score", 5),
-    )
+    _log(task_id, "Agent 9: Strategic Intelligence — running", base_progress + step * 8, "Agent 9 · Strategic Intelligence")
+    strategic = agent_strategic(model, company, overview, services, clients, financials, leadership, workforce, scraped)
+    _log(task_id, "Agent 9: Strategic Intelligence — complete", base_progress + step * 9, "Agent 9 · Strategic Intelligence")
 
     return {
-        "profile": target,
-        "synergies": synergies,
-        "technology": tech,
-        "financial": financial,
-        "risk": risk,
-        "devils_advocate": devils_advocate,
-        "weighted_synergy_score": weighted,
+        "company":       company,
+        "overview":      overview,
+        "services":      services,
+        "locations":     locations,
+        "clients":       clients,
+        "financials":    financials,
+        "leadership":    leadership,
+        "glassdoor_news": glassdoor,
+        "workforce":     workforce,
+        "strategic":     strategic,
     }
 
 
-def run_orchestration_pipeline(
-    task_id: str,
-    acquirer: str,
-    inputs: Dict[str, Any],
-    model: Optional[str] = None,
-    simulate: bool = False,
-):
-    task = tasks[task_id]
-    model = model or OLLAMA_MODEL
+def _get_keys():
+    try:
+        import config as _cfg
+        return _cfg.OPENAI_API_KEY, _cfg.GOOGLE_API_KEY
+    except ImportError:
+        return "", ""
+
+
+def run_intelligence_pipeline(task_id: str, company: str, model: Optional[str], simulate: bool,
+                               openai_key: str = "", gemini_key: str = ""):
+    openai_key = openai_key or _get_keys()[0]
+    gemini_key = gemini_key or _get_keys()[1]
+    tasks[task_id]["status"] = "running"
+    m = model or OLLAMA_MODEL
 
     try:
         if simulate:
-            run_simulation(task_id, acquirer, inputs)
+            import time
+            _log(task_id, "Simulation mode: loading pre-built profile", 5, "Initializing")
+            for step, msg in [
+                (18, "Agent 1: Company Profile — complete"),
+                (28, "Agent 2: Services & Products — complete"),
+                (50, "Agents 3–6: Parallel research — complete"),
+                (65, "Agent 7: Glassdoor & News — complete"),
+                (78, "Agent 8: Workforce — complete"),
+                (92, "Agent 9: Strategic Intelligence — complete"),
+            ]:
+                time.sleep(0.5)
+                _log(task_id, msg, step, msg.split(" — ")[0])
+            tasks[task_id]["results"] = {**SIMULATE_PROFILE}
+            tasks[task_id].update({"status": "completed", "progress": 100, "current_agent": "Complete"})
+            _save(task_id)
             return
 
-        task["logs"].append(f"Initializing Ollama pipeline with model: {model}...")
+        # ── Phase 0: Scrape real data ─────────────────────────────────────────
+        llm_sources = [s for s, k in [("OpenAI", openai_key), ("Gemini", gemini_key)] if k]
+        src_note = f" + {'/'.join(llm_sources)}" if llm_sources else ""
+        _log(task_id, f"Phase 0: Gathering data for {company}{src_note}...", 5, "Data Acquisition")
+        scraped = gather_company_intelligence(company, openai_key=openai_key, gemini_key=gemini_key)
+        page_count = len(scraped.get("website", {}))
+        llm_used   = scraped.get("llm_research", {}).get("sources_used", [])
+        fin_flag   = "public financials" if scraped.get("financials") else "private"
+        _log(task_id, f"Data acquired: {page_count} pages, {fin_flag}, LLM={llm_used or 'none'}", 12, "Data Acquisition")
 
-        # Agent 1 ─ Corporate Strategy
-        task["status"] = "running"
-        task["current_agent"] = "Corporate Strategy Analyst"
-        task["progress"] = 10
-        task["logs"].append("Agent 1 [Corporate Strategy Analyst] starting analysis...")
-        strategy_output = run_corporate_strategy(model, acquirer, inputs)
-        task["results"]["strategy"] = strategy_output
-        task["logs"].append("Agent 1 completed.")
+        # ── Phase 1–9: Intelligence agents ───────────────────────────────────
+        results = _profile_company(task_id, company, m, scraped, base_progress=12, progress_range=83)
 
-        # Agent 2 ─ Industry Intelligence
-        task["current_agent"] = "Industry Intelligence Analyst"
-        task["progress"] = 20
-        task["logs"].append("Agent 2 [Industry Intelligence Analyst] analyzing market trends...")
-        industry_output = run_industry_intelligence(model, acquirer, inputs)
-        task["results"]["industry"] = industry_output
-        task["logs"].append("Agent 2 completed.")
-
-        # Agent 3 ─ Target Discovery
-        task["current_agent"] = "Acquisition Target Discovery Agent"
-        task["progress"] = 35
-        task["logs"].append("Agent 3 [Target Discovery] searching for candidates...")
-        discovery_output = run_target_discovery(model, acquirer, strategy_output, industry_output, inputs)
-        candidates = discovery_output.get("candidates", [])
-        task["results"]["discovery"] = discovery_output
-        task["logs"].append(f"Agent 3 discovered {len(candidates)} acquisition candidates.")
-
-        if len(candidates) < 20:
-            task["logs"].append(f"Warning: Only {len(candidates)} candidates found (target: 20). Proceeding.")
-
-        sorted_candidates = sorted(candidates, key=lambda x: x.get("strategic_fit_score", 0), reverse=True)
-        top_10 = sorted_candidates[:10]
-        remaining = sorted_candidates[10:]
-        task["logs"].append(f"Selected top {len(top_10)} candidates for deep M&A evaluation.")
-
-        top_evaluations = []
-        progress_per_target = 45.0 / max(1, len(top_10))
-
-        for idx, target in enumerate(top_10):
-            target_name = target.get("name", f"Target {idx+1}")
-            task["current_agent"] = f"Deep Evaluation: {target_name}"
-            task["logs"].append(f"[{idx+1}/{len(top_10)}] Evaluating {target_name} (agents 4–8 in parallel)...")
-
-            try:
-                eval_result = _evaluate_target(model, acquirer, target, strategy_output, inputs)
-                top_evaluations.append(eval_result)
-                task["progress"] = int(35 + (idx + 1) * progress_per_target)
-                score = eval_result["weighted_synergy_score"]
-                risk = eval_result["risk"]["risk_score"]
-                task["logs"].append(f"  ✓ {target_name} — Synergy: {score}/100, Risk: {risk}/10")
-            except Exception as e:
-                task["logs"].append(f"  ✗ {target_name} failed evaluation: {str(e)[:120]}")
-
-        # Agent 9 ─ M&A Partner
-        task["current_agent"] = "M&A Partner Agent"
-        task["progress"] = 90
-        task["logs"].append("Agent 9 [M&A Partner] reviewing all findings...")
-        partner_output = run_ma_partner(model, acquirer, top_evaluations, inputs)
-        task["results"]["partner"] = partner_output
-        task["logs"].append("Agent 9 report finalized.")
-
-        # Build longlist
-        top_evaluations_sorted = sorted(top_evaluations, key=lambda x: x["weighted_synergy_score"], reverse=True)
-        longlist = []
-        rank = 1
-        for te in top_evaluations_sorted:
-            longlist.append({
-                "rank": rank,
-                "company": te["profile"]["name"],
-                "industry": te["profile"]["industry"],
-                "strategic_fit": te["synergies"]["strategic_fit"],
-                "synergy_score": te["weighted_synergy_score"],
-                "risk_score": te["risk"]["risk_score"],
-                "evaluated": True,
-            })
-            rank += 1
-        for t_rem in remaining:
-            longlist.append({
-                "rank": rank,
-                "company": t_rem["name"],
-                "industry": t_rem["industry"],
-                "strategic_fit": t_rem["strategic_fit_score"],
-                "synergy_score": "N/A",
-                "risk_score": "N/A",
-                "evaluated": False,
-            })
-            rank += 1
-
-        task["results"]["longlist"] = longlist
-        task["results"]["top_evaluations"] = top_evaluations_sorted
-
-        save_task_to_disk(task_id)
-
-        task["progress"] = 100
-        task["status"] = "completed"
-        task["logs"].append("✓ M&A Discovery and Synergy Evaluation completed successfully!")
+        # Attach scraped metadata for UI source chips
+        results["_scraped_meta"] = {
+            "website_pages": len(scraped.get("website", {})),
+            "wiki_ok":       bool(scraped.get("wiki", {}).get("extract")),
+            "search_count":  sum(len(v) for v in scraped.get("search", {}).values()),
+            "fin_ok":        bool(scraped.get("financials")),
+        }
+        results["_llm_sources"] = scraped.get("llm_research", {}).get("sources_used", [])
+        tasks[task_id]["results"] = results
+        tasks[task_id].update({"status": "completed", "progress": 100, "current_agent": "Complete"})
+        _save(task_id)
 
     except Exception as e:
-        task["status"] = "failed"
-        task["logs"].append(f"CRITICAL ERROR: {str(e)}")
-        task["logs"].append(traceback.format_exc())
-        print(f"Pipeline error: {e}")
-        traceback.print_exc()
+        tasks[task_id].update({"status": "failed", "error": str(e), "current_agent": "Error"})
+        _log(task_id, f"CRITICAL ERROR: {e}", tasks[task_id].get("progress", 0), "Error")
+        _save(task_id)
 
 
-def save_task_to_disk(task_id: str):
-    os.makedirs("projects", exist_ok=True)
-    with open(f"projects/{task_id}.json", "w") as f:
-        json.dump(tasks[task_id], f, indent=2)
+# ── Discovery pipeline ────────────────────────────────────────────────────────
+def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Optional[str], simulate: bool,
+                            openai_key: str = "", gemini_key: str = ""):
+    openai_key = openai_key or _get_keys()[0]
+    gemini_key = gemini_key or _get_keys()[1]
+    tasks[task_id]["status"] = "running"
+    m = model or OLLAMA_MODEL
+
+    try:
+        if simulate:
+            import time
+            _log(task_id, "Simulation: loading pre-built discovery results", 5, "Initializing")
+            time.sleep(0.5)
+            _log(task_id, f"Acquirer profiled: {SIMULATE_DISCOVERY['acquirer']}", 15, "Acquirer Profile")
+            time.sleep(0.5)
+            _log(task_id, "Target discovery: 1 candidate found", 25, "Target Discovery")
+            time.sleep(0.5)
+            _log(task_id, "Target 1: Fellowmind — intelligence gathering complete", 65, "Target 1 · Fellowmind")
+            time.sleep(0.5)
+            _log(task_id, "Target 1: Synergy model complete", 85, "Synergy Model")
+            time.sleep(0.3)
+            tasks[task_id]["results"] = {**SIMULATE_DISCOVERY}
+            tasks[task_id].update({"status": "completed", "progress": 100, "current_agent": "Complete"})
+            _save(task_id)
+            return
+
+        # ── Step 0: Scrape and profile acquirer ───────────────────────────────
+        _log(task_id, f"Step 0: Gathering acquirer data: {acquirer}", 5, "Acquirer · Data Acquisition")
+        acq_scraped = gather_company_intelligence(acquirer, openai_key=openai_key, gemini_key=gemini_key)
+        llm_used = acq_scraped.get("llm_research", {}).get("sources_used", [])
+        _log(task_id, f"Acquirer data acquired: {len(acq_scraped.get('website',{}))} pages, LLM={llm_used or 'none'}", 12, "Acquirer · Profiling")
+        acq_profile = agent_acquirer_profile(m, acquirer, acq_scraped)
+        _log(task_id, "Acquirer profile complete", 18, "Acquirer · Profiling")
+
+        # ── Step 1: Discover targets ──────────────────────────────────────────
+        _log(task_id, "Step 1: Searching for acquisition targets...", 20, "Target Discovery")
+
+        target_names: List[str] = []
+        rationales: List[str] = []
+
+        # A: LLM-based discovery (OpenAI + Gemini) — if keys available
+        if openai_key or gemini_key:
+            from llm_research import research_discovery_targets
+            _log(task_id, "Querying OpenAI + Gemini for target suggestions...", 21, "Target Discovery")
+            llm_disc = research_discovery_targets(acquirer, thesis, openai_key=openai_key, gemini_key=gemini_key)
+            llm_names = llm_disc.get("target_names", [])
+            llm_names = [n for n in llm_names if n and len(n.strip()) > 2][:5]
+            if llm_names:
+                target_names = llm_names
+                # Store discovery context for later use in synergy agents
+                acq_scraped["llm_discovery"] = llm_disc
+                _log(task_id, f"LLM discovery found {len(target_names)} targets: {target_names}", 24, "Target Discovery")
+
+        # B: DDG fallback if LLM discovery got nothing
+        if not target_names:
+            raw_snippets = discover_acquisition_targets(thesis)
+            _log(task_id, f"DDG found {len(raw_snippets)} snippets, extracting names...", 24, "Target Discovery")
+            if raw_snippets:
+                extracted    = agent_extract_targets(m, raw_snippets, thesis)
+                target_names = extracted.get("company_names", [])[:4]
+                rationales   = extracted.get("rationale_per_target", [])
+                target_names = [n for n in target_names if n and len(n.strip()) > 2
+                                and not n.lower().startswith("company")
+                                and not re.match(r"^\d", n.strip())]
+
+        _log(task_id, f"Identified {len(target_names)} target candidates: {target_names}", 28, "Target Discovery")
+
+        if not target_names:
+            tasks[task_id]["results"] = {
+                "acquirer": acquirer, "thesis": thesis, "targets": [],
+                "error": "No targets found. Add OpenAI/Gemini API keys for better discovery, or use Simulation Mode.",
+            }
+            tasks[task_id].update({"status": "completed", "progress": 100, "current_agent": "Complete"})
+            _save(task_id)
+            return
+
+        # ── Step 2: Profile each target ───────────────────────────────────────
+        profiled_targets = []
+        base = 28
+        step_each = (65 - base) // max(len(target_names), 1)
+
+        for i, tname in enumerate(target_names):
+            pct = base + i * step_each
+            _log(task_id, f"Target {i+1}/{len(target_names)}: Gathering data for {tname}...", pct, f"Target {i+1} · {tname}")
+            tgt_scraped = gather_company_intelligence(tname, openai_key=openai_key, gemini_key=gemini_key)
+            _log(task_id, f"Target {i+1}: Running intelligence agents…", pct + step_each // 3, f"Target {i+1} · {tname}")
+            profile = _profile_company(task_id, tname, m, tgt_scraped, base_progress=pct, progress_range=step_each)
+            profile["search_rationale"] = rationales[i] if i < len(rationales) else ""
+
+            # ── Step 3: Synergy model ─────────────────────────────────────────
+            _log(task_id, f"Target {i+1}: Computing synergy model…", pct + step_each - 2, f"Synergy · {tname}")
+            synergy = agent_synergy_model(
+                m, acquirer, tname,
+                acq_profile,
+                profile["overview"],
+                profile["services"],
+                profile["clients"],
+                profile["financials"],
+                profile["locations"],
+                tgt_scraped.get("financials", {}),
+            )
+            profile["synergy"] = synergy
+            profiled_targets.append(profile)
+
+        # ── Sort by synergy potential ─────────────────────────────────────────
+        profiled_targets.sort(
+            key=lambda t: t.get("synergy", {}).get("total_high_usd_m", 0),
+            reverse=True,
+        )
+
+        tasks[task_id]["results"] = {
+            "acquirer":  acquirer,
+            "thesis":    thesis,
+            "targets":   profiled_targets,
+        }
+        tasks[task_id].update({"status": "completed", "progress": 100, "current_agent": "Complete"})
+        _save(task_id)
+
+    except Exception as e:
+        tasks[task_id].update({"status": "failed", "error": str(e), "current_agent": "Error"})
+        _log(task_id, f"CRITICAL ERROR: {e}", tasks[task_id].get("progress", 0), "Error")
+        _save(task_id)
 
 
-def start_analysis_task(
-    acquirer: str,
-    inputs: Dict[str, Any],
-    model: Optional[str] = None,
-    simulate: bool = False,
-) -> str:
+# ── Public API ────────────────────────────────────────────────────────────────
+def start_analysis_task(company: str, model: Optional[str] = None, simulate: bool = False) -> str:
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
-        "task_id": task_id,
-        "acquirer": acquirer,
-        "inputs": inputs,
-        "model": model or OLLAMA_MODEL,
-        "simulate": simulate,
-        "status": "queued",
-        "current_agent": "None",
-        "progress": 0,
-        "logs": ["Analysis queued. Background pipeline starting..."],
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "results": {},
+        "task_id": task_id, "mode": "profile", "company": company,
+        "status": "pending", "current_agent": "Initializing", "progress": 0,
+        "logs": [], "results": None,
+        "created_at": datetime.utcnow().isoformat(),
+        "model": model or OLLAMA_MODEL, "simulate": simulate,
     }
-
-    thread = threading.Thread(
-        target=run_orchestration_pipeline,
-        args=(task_id, acquirer, inputs, model, simulate),
+    threading.Thread(
+        target=run_intelligence_pipeline,
+        args=(task_id, company, model, simulate),
         daemon=True,
-    )
-    thread.start()
+    ).start()
     return task_id
 
 
-def run_simulation(task_id: str, acquirer: str, inputs: Dict[str, Any]):
-    task = tasks[task_id]
-    task["status"] = "running"
-
-    industry_focus = inputs.get("industry_focus", "Technology & Digital Services")
-    budget = inputs.get("acquisition_budget", "$200M – $500M")
-
-    steps = [
-        ("Corporate Strategy Analyst", 10, f"Analyzing internal value chain and capabilities of {acquirer}..."),
-        ("Industry Intelligence Analyst", 20, f"Mapping {industry_focus} competitive landscape..."),
-        ("Acquisition Target Discovery Agent", 35, "Scanning market databases and compiling longlist of 20 targets..."),
-    ]
-    for agent, progress, log in steps:
-        task["current_agent"] = agent
-        task["progress"] = progress
-        task["logs"].append(log)
-        time.sleep(1.0)
-        task["logs"].append(f"Agent '{agent}' completed analysis.")
-
-    candidate_names = [
-        "Synthetix AI", "CloudSentry", "AeroTech Solutions", "Quantalytix", "InnoWave Systems",
-        "Apex Digital", "DataCore Systems", "Stratus Cloud", "BlueShift Labs", "Nova Analytics",
-        "Pinnacle Cyber", "Integra Software", "Element Security", "Vanguard AI", "Logix Systems",
-        "Vertigo Labs", "Hyperion Data", "Zenith Consulting", "CoreLogic IT", "Aegis Software",
-    ]
-
-    candidates = [
-        {
-            "name": name,
-            "industry": industry_focus,
-            "headquarters": "New York, USA" if i % 2 == 0 else "London, UK",
-            "revenue_estimate": f"${10 + (20 - i) * 3}M – ${20 + (20 - i) * 4}M",
-            "employee_estimate": 50 + (20 - i) * 10,
-            "key_products": [f"{name} Platform v2", f"{name} Managed Engine"],
-            "core_capabilities": ["Cloud Native Migration", "Predictive ML Modeling", "Enterprise Integration"],
-            "market_position": "Niche Challenger" if i > 5 else "Regional Leader",
-            "strategic_fit_score": max(1, 9 - (i // 3)),
-        }
-        for i, name in enumerate(candidate_names)
-    ]
-
-    task["results"]["strategy"] = {
-        "business_model_summary": "Core consulting and systems integration business with strong enterprise relationships but facing pressure from AI-automated workflows.",
-        "strategic_priorities": [
-            "Accelerate AI integration across key verticals",
-            "Expand high-margin consulting capabilities",
-            "Establish leadership in cloud cybersecurity solutions",
-        ],
-        "acquisition_rationale": "To bridge the technology gap in GenAI engineering and cyber compliance before boutique firms erode market share.",
-        "gaps": {
-            "capability_gaps": ["Generative AI Fine-tuning", "Zero-Trust Cloud Architecture"],
-            "market_gaps": ["Mid-Market Enterprise Segment"],
-            "technology_gaps": ["Proprietary Automated DevSecOps Platforms"],
-            "customer_gaps": ["Digital Native Tech Startups"],
-            "geographic_gaps": ["Nordic Region", "DACH Region presence"],
-        },
+def start_discovery_task(acquirer: str, thesis: Dict, model: Optional[str] = None, simulate: bool = False) -> str:
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "task_id": task_id, "mode": "discovery", "company": acquirer,
+        "acquirer": acquirer, "thesis": thesis,
+        "status": "pending", "current_agent": "Initializing", "progress": 0,
+        "logs": [], "results": None,
+        "created_at": datetime.utcnow().isoformat(),
+        "model": model or OLLAMA_MODEL, "simulate": simulate,
     }
-
-    task["results"]["industry"] = {
-        "structure": "Highly fragmented in consulting segments; rapid consolidation at the top with large integrators purchasing AI-native boutiques.",
-        "growth_trends": ["Generative AI integration (CAGR +34%)", "Hybrid Cloud Security orchestration"],
-        "consolidation_trends": ["PE rollups of mid-sized IT consultancies", "Hyperscaler partner network mergers"],
-        "emerging_technologies": ["Retrieval-Augmented Generation", "Agentic Workflow Orchestrators", "Quantum Encryption Readiness"],
-        "regulatory_trends": ["EU AI Act compliance enforcement", "Strict data sovereignty laws"],
-        "attractive_categories": ["AI Boutique Agencies", "B2B SaaS Security Tools", "Managed Cloud Integrators"],
-        "disruption_risks": ["AI-driven automated coding reducing consultant headcount requirements"],
-    }
-
-    top_evaluations = []
-    for idx, name in enumerate(candidate_names[:10]):
-        task["current_agent"] = f"Evaluating target: {name}"
-        task["logs"].append(f"[{idx+1}/10] Running deep evaluation for {name} (agents 4–8 in parallel)...")
-        time.sleep(0.4)
-
-        strat_fit = max(1, 9 - (idx // 3))
-        rev_syn = max(1, 8 - (idx % 3))
-        prod_syn = max(1, 7 - (idx % 2))
-        tech_syn = max(1, 8 - (idx // 4))
-        cust_syn = max(1, 9 - (idx % 4))
-        geo_syn = max(1, 7 - (idx // 5))
-        fin_feas = 6 + (idx % 3)
-        risk_score = 3 + (idx % 4)
-        cult_comp = max(1, 8 - (idx // 3))
-
-        weighted = calculate_synergy_score(strat_fit, rev_syn, prod_syn, tech_syn, cust_syn, geo_syn, fin_feas, risk_score, cult_comp)
-
-        top_evaluations.append({
-            "profile": {
-                "name": name,
-                "industry": industry_focus,
-                "headquarters": "New York, USA" if idx % 2 == 0 else "London, UK",
-                "revenue_estimate": f"${20 + (10 - idx) * 5}M",
-                "employee_estimate": 60 + (10 - idx) * 15,
-                "key_products": [f"{name} Platform v2", f"{name} Cloud Engine"],
-                "core_capabilities": ["Generative AI fine-tuning", "Advanced analytics"],
-                "market_position": "Niche Leader" if idx < 3 else "Rising Challenger",
-                "strategic_fit_score": strat_fit,
-            },
-            "synergies": {
-                "strategic_fit": strat_fit,
-                "revenue_synergy": {
-                    "score": rev_syn,
-                    "explanation": f"High potential for cross-selling {name}'s AI expertise to {acquirer}'s existing enterprise client base.",
-                    "opportunities": ["Bundle AI engineering with legacy cloud integration packages", "Upsell advanced security modules"],
-                },
-                "product_synergy": {
-                    "score": prod_syn,
-                    "explanation": "Complementary portfolios. Target's proprietary tools integrate directly into client delivery portals.",
-                    "opportunities": ["Integrate target AI agent engine into core dashboard", "Consolidate consulting delivery tools"],
-                },
-                "market_synergy": {
-                    "score": 8,
-                    "explanation": "Acquisition dramatically strengthens market share in mid-market tech vertical.",
-                    "opportunities": ["Ecosystem expansion with key hyperscalers", "Co-marketing new service offerings"],
-                },
-                "customer_synergy": {
-                    "score": cust_syn,
-                    "explanation": "Virtually zero client overlap. Target services mid-market tech; acquirer services Fortune 500.",
-                    "opportunities": ["Cross-sell enterprise scale solutions to target's fast-growing clients"],
-                },
-                "geographic_synergy": {
-                    "score": geo_syn,
-                    "explanation": "Fills critical presence in key regional hubs.",
-                    "opportunities": ["Establish physical Delivery Center in Europe/US"],
-                },
-            },
-            "technology": {
-                "technology_synergy_score": tech_syn,
-                "tech_stack_analysis": "Excellent stack compatibility. Built on Python/React hosted on AWS/GCP, matching acquirer infrastructure.",
-                "ip_and_patents": ["Proprietary LLM wrapper engine", "Custom dataset preprocessing pipeline"],
-                "talent_and_platform_compatibility": f"Target has 25+ senior ML engineers who can immediately step into lead developer roles.",
-            },
-            "financial": {
-                "target_financials": {
-                    "revenue": f"${20 + (10 - idx) * 5}M",
-                    "ebitda": f"${3 + (10 - idx)}M",
-                    "valuation_estimate": f"${15 + (10 - idx) * 6}M – ${25 + (10 - idx) * 9}M",
-                    "growth_profile": "+25% YoY",
-                },
-                "affordability_score": fin_feas,
-                "financial_health_score": 8,
-                "roi_potential_score": 7,
-                "value_creation_score": 8,
-                "financial_feasibility": f"Transaction is highly feasible within acquirer's budget of {budget}. Valuation multiple of 8–12x EBITDA is standard for high-growth tech consultancies.",
-            },
-            "risk": {
-                "risk_score": risk_score,
-                "strategic_risks": {"level": "Medium" if risk_score > 6 else "Low", "description": "Minor customer overlap could lead to minor contract consolidations."},
-                "financial_risks": {"level": "High" if idx == 0 else ("Medium" if risk_score > 4 else "Low"), "description": "Premium multiples could lead to goodwill impairment if integration is delayed."},
-                "operational_risks": {"level": "Low", "description": "Operations are standardized on agile workflows, making process integration simple."},
-                "technology_risks": {"level": "Low", "description": "Low platform integration friction; standard cloud architectures."},
-                "cultural_risks": {"level": "Medium", "description": "Risk of boutique startup talent leaving after earning earn-outs."},
-            },
-            "devils_advocate": {
-                "why_deal_should_not_happen": "Boutique AI consultancies are heavily reliant on 3–4 key founders. If they depart post-acquisition, the value is destroyed.",
-                "weak_assumptions": "Assumes immediate 25% cross-sell synergy in year 1, which is historically optimistic for consulting mergers.",
-                "value_destruction_scenarios": "Loss of critical technical talent and customer churn due to slower enterprise decision-making under the acquirer's brand.",
-                "post_merger_risks": "Cultural clash between corporate hierarchy and startup agility.",
-                "competitor_benefits": "Competitors will exploit integration confusion to poach key talent.",
-                "bear_case": "Revenue growth flatlines as founders exit, resulting in a $20M write-down within 2 years.",
-                "bull_case": "Successful integration allows scaling target's AI IP to 100+ enterprise clients, generating a 3.5× ROI on capital.",
-                "cultural_compatibility_score": cult_comp,
-            },
-            "weighted_synergy_score": weighted,
-        })
-        task["logs"].append(f"  ✓ {name} — Synergy: {weighted}/100, Risk: {risk_score}/10")
-
-    task["current_agent"] = "M&A Partner Agent"
-    task["progress"] = 90
-    task["logs"].append("Agent 9 [M&A Partner Agent] reviewing all evaluations...")
-    time.sleep(0.8)
-
-    top_evaluations_sorted = sorted(top_evaluations, key=lambda x: x["weighted_synergy_score"], reverse=True)
-
-    recs = []
-    for idx, te in enumerate(top_evaluations_sorted):
-        if idx == 0:
-            tier, rational = "Tier 1", "Highest strategic alignment, strong proprietary AI tools, and manageable risk profile."
-        elif idx <= 2:
-            tier, rational = "Tier 2", "Excellent capability fit, but slightly higher valuation multiple or integration complexity."
-        elif idx <= 5:
-            tier, rational = "Tier 3", "Good technology stack, but minor customer overlap or slower growth metrics."
-        else:
-            tier, rational = "Tier 4", "Low priority; monitor for now as a valuation play."
-        recs.append({"company_name": te["profile"]["name"], "tier": tier, "rationalization": rational})
-
-    t0 = top_evaluations_sorted[0]["profile"]["name"]
-    t1 = top_evaluations_sorted[1]["profile"]["name"] if len(top_evaluations_sorted) > 1 else t0
-
-    task["results"]["partner"] = {
-        "critique": "The analyst models have overstated revenue cross-selling speed. Historical averages suggest integration takes 18 months, not 12. However, the capability fit remains exceptionally strong.",
-        "hidden_opportunities": [
-            "Leveraging target's pre-trained vertical models to win bids in public sector consulting",
-            "Offshore cost arbitrage by moving target backend development to acquirer's delivery centers",
-        ],
-        "hidden_risks": [
-            "Hyperscaler partner status downgrades due to entity consolidation",
-            "Key engineer flight post-lockup period (Year 2)",
-        ],
-        "recommendations_table": recs,
-        "final_questions": {
-            "Which company should be acquired first?": f"{t0} should be the immediate priority due to its superior AI-agent framework and solid EBITDA margins.",
-            "Which acquisition generates maximum shareholder value?": f"{t0} offers the highest ROI, leveraging the acquirer's sales force to scale their proprietary products.",
-            "Which acquisition is most feasible?": f"{t1} has a clean corporate structure, transparent valuation expectations, and uses compatible tech stacks.",
-            "Which acquisition has the best risk-adjusted return?": f"{t0} presents the lowest risk profile while filling the critical AI engineering capability gap.",
-            "What is the ideal acquisition roadmap for the next 3–5 years?": f"Phase 1: Acquire {t0} to build core AI competency. Phase 2: Acquire {t1} in Year 2 for geographic expansion. Phase 3: Roll up smaller regional boutiques in Years 3–5.",
-        },
-        "ideal_roadmap_milestones": [
-            "Month 1–3: Due Diligence & Regulatory Approvals for primary target.",
-            "Month 4–6: Legal closing, announcement, and executive alignment workshop.",
-            "Month 6–12: Technical integration of proprietary platforms and core systems.",
-            "Month 12–24: Cross-selling push across Fortune 500 client base.",
-            "Year 2–3: Secondary geographical expansion acquisition.",
-            "Year 3–5: Optimization, cost consolidation, and boutique roll-ups.",
-        ],
-    }
-
-    longlist = []
-    rank = 1
-    for te in top_evaluations_sorted:
-        longlist.append({
-            "rank": rank,
-            "company": te["profile"]["name"],
-            "industry": te["profile"]["industry"],
-            "strategic_fit": te["synergies"]["strategic_fit"],
-            "synergy_score": te["weighted_synergy_score"],
-            "risk_score": te["risk"]["risk_score"],
-            "evaluated": True,
-        })
-        rank += 1
-    for c in candidates[10:]:
-        longlist.append({
-            "rank": rank,
-            "company": c["name"],
-            "industry": c["industry"],
-            "strategic_fit": c["strategic_fit_score"],
-            "synergy_score": "N/A",
-            "risk_score": "N/A",
-            "evaluated": False,
-        })
-        rank += 1
-
-    task["results"]["longlist"] = longlist
-    task["results"]["top_evaluations"] = top_evaluations_sorted
-
-    save_task_to_disk(task_id)
-    task["progress"] = 100
-    task["status"] = "completed"
-    task["logs"].append("✓ Simulated M&A Evaluation completed successfully!")
+    threading.Thread(
+        target=run_discovery_pipeline,
+        args=(task_id, acquirer, thesis, model, simulate),
+        daemon=True,
+    ).start()
+    return task_id

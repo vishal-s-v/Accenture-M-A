@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+httpx
+beautifulsoup4
+lxml
+ddgs
+yfinance
+openai
+google-genai

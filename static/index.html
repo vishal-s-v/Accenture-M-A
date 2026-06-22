@@ -1,420 +1,276 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M&A Intelligence Platform</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/index.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accenture V&amp;A · Intelligence Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/index.css" />
 </head>
 <body>
-    <div class="shell">
 
-        <!-- ── Sidebar ─────────────────────────────────────────── -->
-        <aside class="sidebar">
-            <div class="sidebar-brand">
-                <div class="brand-icon">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                    </svg>
-                </div>
-                <div class="brand-text">
-                    <span class="brand-name">M&A Intelligence</span>
-                    <span class="brand-sub">9-Agent Pipeline</span>
-                </div>
-            </div>
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="brand">
+      <span class="brand-arrow">&gt;</span>
+      <div class="brand-text">
+        <div class="brand-name">Accenture</div>
+        <div class="brand-sub">V&amp;A Intelligence</div>
+      </div>
+    </div>
+  </div>
 
-            <nav class="sidebar-nav">
-                <span class="nav-label">Saved Runs</span>
-                <select id="projectSelect" class="project-select">
-                    <option value="">— Select a run —</option>
-                </select>
-                <button id="deleteProjectBtn" class="btn-ghost-danger hidden" title="Delete run">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
-                    Delete Run
-                </button>
-            </nav>
+  <!-- Mode toggle -->
+  <div class="mode-bar">
+    <button class="mode-btn active" id="modeProfile"  onclick="setMode('profile')">Intelligence Profile</button>
+    <button class="mode-btn"        id="modeDiscover" onclick="setMode('discover')">M&amp;A Discovery</button>
+  </div>
 
-            <div class="sidebar-divider"></div>
+  <!-- Saved reports -->
+  <div class="sidebar-section">
+    <div class="section-label">Saved Reports</div>
+    <select class="input-field" id="savedProjects" onchange="loadProject(this.value)">
+      <option value="">— Select saved report —</option>
+    </select>
+  </div>
 
-            <form id="maForm" class="config-form">
-                <div class="form-section">
-                    <label class="field-label required">Acquiring Company</label>
-                    <input type="text" id="acquirerInput" class="field-input" placeholder="e.g. Accenture, Google, Salesforce" required>
-                </div>
+  <!-- ── Profile form ──────────────────────────────────────────────────── -->
+  <div class="sidebar-section" id="formProfile">
+    <div class="section-label">Intelligence Profile</div>
+    <form id="analyzeForm" onsubmit="handleProfile(event)">
+      <div class="field-group">
+        <label class="field-label">Company Name / URL <span class="required">*</span></label>
+        <input type="text" id="companyInput" class="input-field" placeholder="e.g. Infosys BPM or infosys.com/bpm" required />
+      </div>
+      <div class="config-card">
+        <div class="config-card-header">
+          <div class="config-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg></div>
+          <span>Ollama Model</span>
+          <div class="ollama-status" id="ollamaStatus"><span class="status-dot dot-checking"></span></div>
+        </div>
+        <input type="text" id="modelInput" class="input-field input-sm" value="llama3.2:latest" />
+      </div>
 
-                <!-- Optional Parameters Accordion -->
-                <details class="accordion">
-                    <summary class="accordion-trigger">
-                        <span>Optional Filters</span>
-                        <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                    </summary>
-                    <div class="accordion-body">
-                        <div class="form-section">
-                            <label class="field-label">Industry Focus</label>
-                            <input type="text" id="industryFocus" class="field-input" placeholder="e.g. Generative AI, cybersecurity">
-                        </div>
-                        <div class="form-section">
-                            <label class="field-label">Geography Preference</label>
-                            <input type="text" id="geographyPref" class="field-input" placeholder="e.g. North America, Europe">
-                        </div>
-                        <div class="form-row">
-                            <div class="form-section">
-                                <label class="field-label">Revenue Range</label>
-                                <input type="text" id="revenueRange" class="field-input" placeholder="$10M–$50M">
-                            </div>
-                            <div class="form-section">
-                                <label class="field-label">Acq. Budget</label>
-                                <input type="text" id="acquisitionBudget" class="field-input" placeholder="$200M max">
-                            </div>
-                        </div>
-                        <div class="form-section">
-                            <label class="field-label">Strategic Goals</label>
-                            <textarea id="strategicGoals" class="field-input" rows="2" placeholder="Bridge technology gaps, expand customer base..."></textarea>
-                        </div>
-                        <div class="form-section">
-                            <label class="field-label">Technology Focus</label>
-                            <input type="text" id="technologyAreas" class="field-input" placeholder="PyTorch, Kubernetes, React">
-                        </div>
-                        <div class="form-row">
-                            <div class="form-section">
-                                <label class="field-label">Risk Appetite</label>
-                                <select id="riskAppetite" class="field-input">
-                                    <option value="Conservative">Conservative</option>
-                                    <option value="Moderate" selected>Moderate</option>
-                                    <option value="Aggressive">Aggressive</option>
-                                </select>
-                            </div>
-                            <div class="form-section">
-                                <label class="field-label">Time Horizon</label>
-                                <input type="text" id="timeHorizon" class="field-input" placeholder="2–3 years">
-                            </div>
-                        </div>
-                    </div>
-                </details>
+      <div class="simulate-row">
+        <div class="simulate-info">
+          <div class="simulate-label">Simulation Mode</div>
+          <div class="simulate-desc">Pre-built sample data, no Ollama required</div>
+        </div>
+        <label class="toggle-wrap"><input type="checkbox" id="simulateToggle" /><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <button type="submit" class="btn-primary" id="submitBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        Run Intelligence Analysis
+      </button>
+    </form>
+  </div>
 
-                <!-- Ollama Config Card -->
-                <div class="provider-card">
-                    <div class="provider-header">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-                        <span>Ollama (Local LLM)</span>
-                    </div>
+  <!-- ── Discovery form ────────────────────────────────────────────────── -->
+  <div class="sidebar-section hidden" id="formDiscover">
+    <div class="section-label">M&amp;A Target Discovery</div>
+    <form id="discoverForm" onsubmit="handleDiscover(event)">
+      <div class="field-group">
+        <label class="field-label">Acquirer <span class="required">*</span></label>
+        <input type="text" id="acquirerInput" class="input-field" placeholder="e.g. Accenture" required />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Target Sector</label>
+        <input type="text" id="thesisSector" class="input-field" placeholder="e.g. Microsoft Dynamics consulting" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Target Geography</label>
+        <input type="text" id="thesisGeo" class="input-field" placeholder="e.g. DACH, Nordics" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Capability Gap</label>
+        <input type="text" id="thesisCap" class="input-field" placeholder="e.g. SAP to Dynamics migration" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Revenue Range</label>
+        <input type="text" id="thesisRev" class="input-field" placeholder="e.g. $50M–$300M" />
+      </div>
+      <div class="config-card">
+        <div class="config-card-header">
+          <div class="config-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg></div>
+          <span>Ollama Model</span>
+        </div>
+        <input type="text" id="discoverModelInput" class="input-field input-sm" value="llama3.2:latest" />
+      </div>
 
-                    <div class="form-section">
-                        <label class="field-label">Model</label>
-                        <input type="text" id="ollamaModel" class="field-input" value="llama3.2:latest" placeholder="llama3.2:latest, mistral, gemma2...">
-                        <small class="field-hint">Ollama must be running on localhost:11434</small>
-                    </div>
+      <div class="simulate-row">
+        <div class="simulate-info">
+          <div class="simulate-label">Simulation Mode</div>
+          <div class="simulate-desc">Pre-built sample discovery data</div>
+        </div>
+        <label class="toggle-wrap"><input type="checkbox" id="discoverSimulate" /><span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <button type="submit" class="btn-primary" id="discoverBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        Discover Targets
+      </button>
+    </form>
+  </div>
 
-                    <div class="ollama-status" id="ollamaStatus">
-                        <span class="status-dot"></span>
-                        <span id="ollamaStatusText">Check connection</span>
-                    </div>
+  <!-- Agent pipeline diagram -->
+  <div class="sidebar-section flow-section">
+    <div class="section-label">Agent Pipeline</div>
+    <div class="flow-diagram" id="flowDiagram">
+      <!-- Profile mode nodes -->
+      <div id="flow-profile">
+        <div class="flow-node" id="fn0"><span class="flow-num">0</span><span class="flow-label">Data Acquisition</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fn1"><span class="flow-num">1</span><span class="flow-label">Company Profile</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fn2"><span class="flow-num">2</span><span class="flow-label">Services &amp; Products</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-group">
+          <div class="flow-group-label">Parallel Research (3–8)</div>
+          <div class="flow-sub-grid">
+            <div class="flow-sub" id="fn3">3 · Locations</div>
+            <div class="flow-sub" id="fn4">4 · Clients</div>
+            <div class="flow-sub" id="fn5">5 · Financials</div>
+            <div class="flow-sub" id="fn6">6 · Leadership</div>
+            <div class="flow-sub" id="fn7">7 · Ext. Intel</div>
+            <div class="flow-sub" id="fn8">8 · Workforce</div>
+          </div>
+        </div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fn9"><span class="flow-num">9</span><span class="flow-label">Strategic Intelligence</span></div>
+      </div>
+      <!-- Discovery mode nodes -->
+      <div id="flow-discover" class="hidden">
+        <div class="flow-node" id="fd0"><span class="flow-num">0</span><span class="flow-label">Scrape Acquirer</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fd1"><span class="flow-num">1</span><span class="flow-label">Acquirer Profile</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fd2"><span class="flow-num">2</span><span class="flow-label">Target Discovery</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fd3"><span class="flow-num">3–N</span><span class="flow-label">Profile Each Target</span></div>
+        <div class="flow-arrow-v"></div>
+        <div class="flow-node" id="fd4"><span class="flow-num">S</span><span class="flow-label">Synergy Models</span></div>
+      </div>
+    </div>
+  </div>
 
-                    <!-- Simulate Toggle -->
-                    <label class="simulate-toggle">
-                        <input type="checkbox" id="simulateCheckbox">
-                        <div class="toggle-track">
-                            <div class="toggle-thumb"></div>
-                        </div>
-                        <div class="simulate-info">
-                            <span class="simulate-label">Simulation Mode</span>
-                            <span class="simulate-desc">Demo run, no Ollama calls</span>
-                        </div>
-                    </label>
-                </div>
+  <div class="sidebar-footer">
+    <div id="ollamaStatusText" class="status-text">Checking Ollama…</div>
+  </div>
+</aside>
 
-                <button type="submit" id="runBtn" class="btn-primary-run">
-                    <span id="runBtnText">Launch M&A Evaluation</span>
-                    <div class="run-spinner hidden" id="runBtnSpinner"></div>
-                    <svg id="runBtnIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 12 19 12"></polyline><polyline points="13 6 19 12 13 18"></polyline></svg>
-                </button>
-            </form>
-        </aside>
+<main class="content">
 
-        <!-- ── Main Content ──────────────────────────────────────── -->
-        <main class="content">
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState">
+    <div class="empty-icon">&gt;</div>
+    <div class="empty-title">V&amp;A Intelligence Platform</div>
+    <div class="empty-desc">Two modes: generate a grounded 11-section company intelligence profile, or run M&amp;A discovery to find acquisition targets and quantify synergies.</div>
+    <div class="empty-sections">
+      <span>§1 Business Overview</span><span>§2 Company Overview</span><span>§3 Services</span>
+      <span>§4 Locations</span><span>§5 Clients</span><span>§6 Financials</span>
+      <span>§7 Leadership</span><span>§8 Glassdoor</span><span>§9 News</span>
+      <span>§10 Workforce</span><span>§11 Strategic Intelligence</span><span>Synergy Model</span>
+    </div>
+    <div class="data-sources-note">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Grounded from: Official website scrape · DuckDuckGo search · yfinance public data
+    </div>
+  </div>
 
-            <!-- Welcome View -->
-            <div id="welcomeView" class="view active">
-                <div class="welcome-wrap">
-                    <div class="welcome-glow"></div>
-                    <div class="welcome-badge">Multi-Agent Intelligence System</div>
-                    <h1 class="welcome-title">Mergers &amp; Acquisitions<br><span class="gradient-text">Target Discovery Engine</span></h1>
-                    <p class="welcome-desc">9 specialized AI agents collaborate in parallel to screen acquisition targets, quantify synergies, challenge assumptions, and deliver investment-grade recommendations.</p>
+  <!-- Progress state -->
+  <div class="progress-state hidden" id="progressState">
+    <div class="progress-header">
+      <div class="progress-company" id="progressCompany">Analyzing…</div>
+      <div class="progress-agent" id="progressAgent">Initializing</div>
+    </div>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
+    <div class="progress-pct" id="progressPct">0%</div>
+    <div class="progress-log" id="progressLog"></div>
+  </div>
 
-                    <div class="agents-grid">
-                        <div class="agent-chip chip-1"><span class="chip-num">1</span>Corporate Strategy</div>
-                        <div class="agent-chip chip-2"><span class="chip-num">2</span>Industry Intel</div>
-                        <div class="agent-chip chip-3"><span class="chip-num">3</span>Target Discovery</div>
-                        <div class="agent-chip chip-4"><span class="chip-num">4</span>Synergy Analysis</div>
-                        <div class="agent-chip chip-5"><span class="chip-num">5</span>Tech Evaluation</div>
-                        <div class="agent-chip chip-6"><span class="chip-num">6</span>Financial Analysis</div>
-                        <div class="agent-chip chip-7"><span class="chip-num">7</span>Risk Assessment</div>
-                        <div class="agent-chip chip-8"><span class="chip-num">8</span>Devil's Advocate</div>
-                        <div class="agent-chip chip-9"><span class="chip-num">9</span>Senior Partner</div>
-                    </div>
+  <!-- ── Profile report ──────────────────────────────────────────────────── -->
+  <div class="report-state hidden" id="reportState">
+    <div class="report-header">
+      <div class="report-company-info">
+        <div class="report-company-name" id="reportCompanyName"></div>
+        <div class="report-meta" id="reportMeta"></div>
+        <div class="report-sources" id="reportSources"></div>
+      </div>
+      <div class="report-actions">
+        <button class="btn-ghost" onclick="exportReport()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Export JSON
+        </button>
+        <button class="btn-ghost" onclick="newAnalysis()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+          New
+        </button>
+      </div>
+    </div>
+    <div class="rtab-bar">
+      <button class="rtab active" onclick="switchTab('overview',this)">Overview</button>
+      <button class="rtab" onclick="switchTab('services',this)">Services &amp; Products</button>
+      <button class="rtab" onclick="switchTab('footprint',this)">Footprint &amp; Clients</button>
+      <button class="rtab" onclick="switchTab('financials',this)">Financials &amp; Leadership</button>
+      <button class="rtab" onclick="switchTab('workforce',this)">Workforce &amp; News</button>
+      <button class="rtab" onclick="switchTab('strategic',this)">Strategic Intelligence</button>
+    </div>
+    <div class="rtab-panels">
+      <div class="rtab-panel active" id="tab-overview">
+        <div class="section-block"><div class="section-tag">§1</div><div class="section-title">Business Overview</div><p class="section-prose" id="s1-overview"></p></div>
+        <div class="section-block"><div class="section-tag">§2</div><div class="section-title">Company Overview</div><div class="kv-grid" id="s2-grid"></div></div>
+      </div>
+      <div class="rtab-panel hidden" id="tab-services">
+        <div class="section-block"><div class="section-tag">§3</div><div class="section-title">Services, Solutions &amp; Products</div><div class="services-list" id="s3-services"></div></div>
+      </div>
+      <div class="rtab-panel hidden" id="tab-footprint">
+        <div class="section-block"><div class="section-tag">§4</div><div class="section-title">Locations &amp; Delivery Footprint</div><div id="s4-locations"></div></div>
+        <div class="section-block"><div class="section-tag">§5</div><div class="section-title">Customers &amp; Market Segments</div><div id="s5-clients"></div></div>
+      </div>
+      <div class="rtab-panel hidden" id="tab-financials">
+        <div class="section-block"><div class="section-tag">§6</div><div class="section-title">Financials &amp; M&amp;A</div><div id="s6-financials"></div></div>
+        <div class="section-block"><div class="section-tag">§7</div><div class="section-title">Leadership Team</div><div id="s7-leadership"></div></div>
+      </div>
+      <div class="rtab-panel hidden" id="tab-workforce">
+        <div class="twin-row">
+          <div class="section-block flex-1"><div class="section-tag">§8</div><div class="section-title">Glassdoor Snapshot</div><div id="s8-glassdoor"></div></div>
+          <div class="section-block flex-1"><div class="section-tag">§9</div><div class="section-title">Recent News</div><div id="s9-news"></div></div>
+        </div>
+        <div class="section-block"><div class="section-tag">§10</div><div class="section-title">Workforce Intelligence</div><div id="s10-workforce"></div></div>
+      </div>
+      <div class="rtab-panel hidden" id="tab-strategic">
+        <div class="section-block"><div class="section-tag">§11</div><div class="section-title">Strategic Intelligence</div><div id="s11-strategic"></div></div>
+      </div>
+    </div>
+  </div>
 
-                    <p class="welcome-cta">← Configure the acquiring company in the sidebar to begin</p>
-                </div>
-            </div>
-
-            <!-- Runner View -->
-            <div id="runnerView" class="view hidden">
-                <div class="runner-header">
-                    <div>
-                        <h2 class="runner-title">Agent Pipeline</h2>
-                        <p class="runner-sub" id="pipelineStatusText">Initializing...</p>
-                    </div>
-                    <div class="pipeline-badge" id="pipelineBadge">
-                        <div class="badge-pulse"></div>
-                        <span id="pipelineBadgeText">Running</span>
-                    </div>
-                </div>
-
-                <!-- Progress -->
-                <div class="progress-block">
-                    <div class="progress-meta">
-                        <span>Pipeline Completion</span>
-                        <span id="progressPct" class="progress-pct">0%</span>
-                    </div>
-                    <div class="progress-track">
-                        <div id="progressFill" class="progress-fill" style="width:0%"></div>
-                    </div>
-                </div>
-
-                <!-- Agent Flow Diagram -->
-                <div class="flow-diagram">
-                    <div class="flow-row">
-                        <div class="flow-node" id="fnode-1">
-                            <div class="fnode-num">1</div>
-                            <div class="fnode-label">Corporate<br>Strategy</div>
-                        </div>
-                        <div class="flow-arrow" id="farrow-1"></div>
-                        <div class="flow-node" id="fnode-2">
-                            <div class="fnode-num">2</div>
-                            <div class="fnode-label">Industry<br>Intel</div>
-                        </div>
-                        <div class="flow-arrow" id="farrow-2"></div>
-                        <div class="flow-node" id="fnode-3">
-                            <div class="fnode-num">3</div>
-                            <div class="fnode-label">Target<br>Discovery</div>
-                        </div>
-                    </div>
-
-                    <div class="flow-vline"></div>
-
-                    <div class="flow-group" id="fgroup-deep">
-                        <div class="flow-group-title">Deep Evaluation · Top 10 Targets · 4–6 Parallel → 7–8 Sequential</div>
-                        <div class="flow-group-nodes">
-                            <div class="flow-sub" id="fsub-4">4 · Technology</div>
-                            <div class="flow-sub" id="fsub-5">5 · Financials</div>
-                            <div class="flow-sub" id="fsub-6">6 · Risk</div>
-                            <div class="flow-sub" id="fsub-7">7 · Synergies</div>
-                            <div class="flow-sub" id="fsub-8">8 · Devil's Advocate</div>
-                        </div>
-                    </div>
-
-                    <div class="flow-vline"></div>
-
-                    <div class="flow-row">
-                        <div class="flow-node flow-node-final" id="fnode-9">
-                            <div class="fnode-num">9</div>
-                            <div class="fnode-label">M&A Senior<br>Partner</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Terminal -->
-                <div class="terminal">
-                    <div class="terminal-bar">
-                        <div class="tbar-dots">
-                            <span class="tdot red"></span>
-                            <span class="tdot yellow"></span>
-                            <span class="tdot green"></span>
-                        </div>
-                        <span class="tbar-title">Live Agent Execution Log</span>
-                        <span id="providerBadge" class="provider-badge-small">GEMINI</span>
-                    </div>
-                    <div id="terminalBody" class="terminal-body">
-                        <div class="tline accent">&gt; Spawning multi-agent M&A pipeline...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Report View -->
-            <div id="reportView" class="view hidden">
-                <div class="report-topbar">
-                    <div class="report-title-block">
-                        <div class="report-tag">Acquisition Intelligence Report</div>
-                        <h2 id="reportTitle" class="report-main-title">M&A Overview</h2>
-                        <p id="reportDate" class="report-date"></p>
-                    </div>
-                    <div class="report-actions">
-                        <span id="reportProviderBadge" class="report-provider-badge"></span>
-                        <button class="btn-export" onclick="window.print()">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                            Export PDF
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Report Tabs -->
-                <div class="report-tabs">
-                    <button class="rtab active" data-tab="exec">Executive Summary</button>
-                    <button class="rtab" data-tab="industry">Industry Analysis</button>
-                    <button class="rtab" data-tab="longlist">Target Longlist</button>
-                    <button class="rtab" data-tab="deepdive">Top 10 Deep Dive</button>
-                    <button class="rtab" data-tab="partner">IB Recommendation</button>
-                </div>
-
-                <!-- Tab: Executive Summary -->
-                <div id="tab-exec" class="rtab-panel active">
-                    <div class="panel-grid-2">
-                        <div class="pcard">
-                            <h3 class="pcard-title">Acquisition Rationale</h3>
-                            <p id="acquirerRationale" class="rationale-text"></p>
-                        </div>
-                        <div class="pcard">
-                            <h3 class="pcard-title">Strategic Priorities</h3>
-                            <ul id="strategicPriorities" class="bullet-list check-list"></ul>
-                        </div>
-                    </div>
-
-                    <div class="pcard mt-20">
-                        <h3 class="pcard-title">Capability & Market Gap Analysis</h3>
-                        <div class="gap-grid">
-                            <div class="gap-col">
-                                <div class="gap-icon">🛠️</div>
-                                <h4 class="gap-title">Capability</h4>
-                                <ul id="gapCapability" class="gap-list"></ul>
-                            </div>
-                            <div class="gap-col">
-                                <div class="gap-icon">📈</div>
-                                <h4 class="gap-title">Market</h4>
-                                <ul id="gapMarket" class="gap-list"></ul>
-                            </div>
-                            <div class="gap-col">
-                                <div class="gap-icon">💻</div>
-                                <h4 class="gap-title">Technology</h4>
-                                <ul id="gapTech" class="gap-list"></ul>
-                            </div>
-                            <div class="gap-col">
-                                <div class="gap-icon">👥</div>
-                                <h4 class="gap-title">Customer</h4>
-                                <ul id="gapCustomer" class="gap-list"></ul>
-                            </div>
-                            <div class="gap-col">
-                                <div class="gap-icon">🌍</div>
-                                <h4 class="gap-title">Geography</h4>
-                                <ul id="gapGeo" class="gap-list"></ul>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pcard mt-20">
-                        <h3 class="pcard-title">3–5 Year M&A Roadmap</h3>
-                        <div id="roadmap" class="roadmap"></div>
-                    </div>
-                </div>
-
-                <!-- Tab: Industry Analysis -->
-                <div id="tab-industry" class="rtab-panel hidden">
-                    <div class="panel-grid-2">
-                        <div class="pcard">
-                            <h3 class="pcard-title">Industry Structure</h3>
-                            <p id="industryStructure" class="body-text"></p>
-                        </div>
-                        <div class="pcard">
-                            <h3 class="pcard-title">Consolidation Trends</h3>
-                            <ul id="consolidationTrends" class="bullet-list arrow-list"></ul>
-                        </div>
-                    </div>
-                    <div class="panel-grid-3 mt-20">
-                        <div class="pcard">
-                            <h3 class="pcard-title text-green">High-Growth Segments</h3>
-                            <ul id="growthSegments" class="bullet-list plus-list"></ul>
-                        </div>
-                        <div class="pcard">
-                            <h3 class="pcard-title text-blue">Emerging Technologies</h3>
-                            <ul id="emergingTech" class="bullet-list plus-list"></ul>
-                        </div>
-                        <div class="pcard">
-                            <h3 class="pcard-title text-red">Disruption Risks</h3>
-                            <ul id="disruptionRisks" class="bullet-list warn-list"></ul>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tab: Longlist -->
-                <div id="tab-longlist" class="rtab-panel hidden">
-                    <div class="pcard">
-                        <div class="pcard-header">
-                            <h3 class="pcard-title">Acquisition Target Longlist</h3>
-                            <span class="badge badge-blue">20+ Candidates Screened</span>
-                        </div>
-                        <div class="table-wrap">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>#</th>
-                                        <th>Company</th>
-                                        <th>Industry</th>
-                                        <th>Strategic Fit</th>
-                                        <th>Synergy Score</th>
-                                        <th>Risk</th>
-                                        <th></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="longlistBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tab: Deep Dive -->
-                <div id="tab-deepdive" class="rtab-panel hidden">
-                    <div class="deepdive-layout">
-                        <aside class="deepdive-sidebar">
-                            <h3 class="sidebar-section-title">Top 10 Targets</h3>
-                            <div id="targetList" class="target-list"></div>
-                        </aside>
-                        <div id="targetDetail" class="deepdive-detail">
-                            <div class="empty-state">
-                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                                <p>Select a target from the sidebar to view the full due diligence report.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tab: IB Recommendation -->
-                <div id="tab-partner" class="rtab-panel hidden">
-                    <div class="pcard">
-                        <h3 class="pcard-title text-purple">Senior M&A Partner Critique</h3>
-                        <blockquote id="partnerCritique" class="critique-quote"></blockquote>
-                    </div>
-                    <div class="panel-grid-2 mt-20">
-                        <div class="pcard">
-                            <h3 class="pcard-title text-green">Hidden Opportunities</h3>
-                            <ul id="hiddenOpportunities" class="bullet-list plus-list"></ul>
-                        </div>
-                        <div class="pcard">
-                            <h3 class="pcard-title text-red">Hidden Risks</h3>
-                            <ul id="hiddenRisks" class="bullet-list warn-list"></ul>
-                        </div>
-                    </div>
-                    <div class="pcard mt-20">
-                        <h3 class="pcard-title">Core M&A Advisory Q&A</h3>
-                        <div id="partnerQA" class="qa-list"></div>
-                    </div>
-                </div>
-            </div>
-        </main>
+  <!-- ── Discovery report ───────────────────────────────────────────────── -->
+  <div class="report-state hidden" id="discoveryState">
+    <div class="report-header">
+      <div class="report-company-info">
+        <div class="report-company-name" id="discAcquirerName"></div>
+        <div class="report-meta" id="discMeta"></div>
+        <div class="report-sources" id="discSources"></div>
+      </div>
+      <div class="report-actions">
+        <button class="btn-ghost" onclick="exportReport()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Export JSON
+        </button>
+        <button class="btn-ghost" onclick="newAnalysis()">New</button>
+      </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <!-- Target tabs -->
+    <div class="rtab-bar" id="targetTabBar"></div>
+
+    <!-- Target panels -->
+    <div class="rtab-panels" id="targetPanels"></div>
+  </div>
+
+</main>
+
+<script src="/static/app.js"></script>
 </body>
 </html>

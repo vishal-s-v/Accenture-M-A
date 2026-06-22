@@ -1,727 +1,659 @@
 'use strict';
 
-// ── State ──────────────────────────────────────────────────
-const state = {
-    taskId: null,
-    pollTimer: null,
-    report: null,
-    targetIdx: 0,
-};
+// ── State ─────────────────────────────────────────────────────────────────────
+const state = { taskId: null, pollTimer: null, report: null, mode: 'profile' };
 
-// ── DOM Shortcuts ──────────────────────────────────────────
-const $ = id => document.getElementById(id);
-const el = {
-    projectSelect: $('projectSelect'),
-    deleteBtn: $('deleteProjectBtn'),
-    maForm: $('maForm'),
-    acquirer: $('acquirerInput'),
-    industryFocus: $('industryFocus'),
-    geographyPref: $('geographyPref'),
-    revenueRange: $('revenueRange'),
-    acqBudget: $('acquisitionBudget'),
-    strategicGoals: $('strategicGoals'),
-    techAreas: $('technologyAreas'),
-    riskAppetite: $('riskAppetite'),
-    timeHorizon: $('timeHorizon'),
-    ollamaModel: $('ollamaModel'),
-    simulate: $('simulateCheckbox'),
-    runBtn: $('runBtn'),
-    runBtnText: $('runBtnText'),
-    runBtnSpinner: $('runBtnSpinner'),
-    runBtnIcon: $('runBtnIcon'),
-
-    // Ollama
-    ollamaStatus: $('ollamaStatus'),
-    ollamaStatusText: $('ollamaStatusText'),
-
-    // Views
-    welcomeView: $('welcomeView'),
-    runnerView: $('runnerView'),
-    reportView: $('reportView'),
-
-    // Runner
-    pipelineStatusText: $('pipelineStatusText'),
-    pipelineBadge: $('pipelineBadge'),
-    pipelineBadgeText: $('pipelineBadgeText'),
-    progressPct: $('progressPct'),
-    progressFill: $('progressFill'),
-    terminalBody: $('terminalBody'),
-    providerBadge: $('providerBadge'),
-
-    // Report
-    reportTitle: $('reportTitle'),
-    reportDate: $('reportDate'),
-    reportProviderBadge: $('reportProviderBadge'),
-
-    // Exec summary
-    acquirerRationale: $('acquirerRationale'),
-    strategicPriorities: $('strategicPriorities'),
-    gapCapability: $('gapCapability'),
-    gapMarket: $('gapMarket'),
-    gapTech: $('gapTech'),
-    gapCustomer: $('gapCustomer'),
-    gapGeo: $('gapGeo'),
-    roadmap: $('roadmap'),
-
-    // Industry
-    industryStructure: $('industryStructure'),
-    consolidationTrends: $('consolidationTrends'),
-    growthSegments: $('growthSegments'),
-    emergingTech: $('emergingTech'),
-    disruptionRisks: $('disruptionRisks'),
-
-    // Longlist
-    longlistBody: $('longlistBody'),
-
-    // Deep dive
-    targetList: $('targetList'),
-    targetDetail: $('targetDetail'),
-
-    // Partner
-    partnerCritique: $('partnerCritique'),
-    hiddenOpportunities: $('hiddenOpportunities'),
-    hiddenRisks: $('hiddenRisks'),
-    partnerQA: $('partnerQA'),
-};
-
-// ── Init ───────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    loadProjects();
-    bindEvents();
-    checkOllamaConnection();
+  checkOllama();
+  loadProjects();
 });
 
-// ── Event Binding ──────────────────────────────────────────
-function bindEvents() {
-    el.maForm.addEventListener('submit', handleSubmit);
-    el.projectSelect.addEventListener('change', handleProjectChange);
-    el.deleteBtn.addEventListener('click', handleDelete);
 
-    // Report tabs
-    document.querySelectorAll('.rtab').forEach(btn => {
-        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
-    });
-
-    // Re-check Ollama when simulate is toggled off
-    el.simulate.addEventListener('change', () => {
-        if (!el.simulate.checked) checkOllamaConnection();
-    });
+// ── Mode toggle ───────────────────────────────────────────────────────────────
+function setMode(m) {
+  state.mode = m;
+  document.getElementById('modeProfile').classList.toggle('active', m === 'profile');
+  document.getElementById('modeDiscover').classList.toggle('active', m === 'discover');
+  document.getElementById('formProfile').classList.toggle('hidden', m !== 'profile');
+  document.getElementById('formDiscover').classList.toggle('hidden', m !== 'discover');
+  document.getElementById('flow-profile').classList.toggle('hidden', m !== 'profile');
+  document.getElementById('flow-discover').classList.toggle('hidden', m !== 'discover');
 }
 
-async function checkOllamaConnection() {
-    el.ollamaStatus.className = 'ollama-status checking';
-    el.ollamaStatusText.textContent = 'Checking connection...';
-    try {
-        const resp = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
-        if (resp.ok) {
-            el.ollamaStatus.className = 'ollama-status connected';
-            el.ollamaStatusText.textContent = 'Ollama is running ✓';
-        } else {
-            throw new Error('non-ok');
-        }
-    } catch {
-        el.ollamaStatus.className = 'ollama-status error';
-        el.ollamaStatusText.textContent = 'Cannot reach localhost:11434';
-    }
+// ── Ollama health ─────────────────────────────────────────────────────────────
+async function checkOllama() {
+  const dot  = document.getElementById('ollamaStatus');
+  const text = document.getElementById('ollamaStatusText');
+  try {
+    const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      dot.innerHTML = '<span class="status-dot dot-ok"></span>';
+      text.textContent = 'Ollama connected'; text.style.color = 'var(--green)';
+    } else throw new Error();
+  } catch {
+    dot.innerHTML = '<span class="status-dot dot-error"></span>';
+    text.textContent = 'Ollama not reachable — use Simulation Mode'; text.style.color = 'var(--red)';
+  }
 }
 
-// ── View Management ────────────────────────────────────────
-function showView(name) {
-    el.welcomeView.classList.add('hidden');
-    el.runnerView.classList.add('hidden');
-    el.reportView.classList.add('hidden');
-
-    if (name === 'welcome') el.welcomeView.classList.remove('hidden');
-    else if (name === 'runner') el.runnerView.classList.remove('hidden');
-    else if (name === 'report') el.reportView.classList.remove('hidden');
-}
-
-// ── Tab Management ─────────────────────────────────────────
-function switchTab(tabName) {
-    document.querySelectorAll('.rtab').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tabName);
-    });
-    document.querySelectorAll('.rtab-panel').forEach(panel => {
-        panel.classList.add('hidden');
-        panel.classList.remove('active');
-    });
-    const target = $(`tab-${tabName}`);
-    if (target) {
-        target.classList.remove('hidden');
-        target.classList.add('active');
-    }
-}
-
-// ── Projects ───────────────────────────────────────────────
+// ── Projects list ─────────────────────────────────────────────────────────────
 async function loadProjects() {
-    try {
-        const projects = await apiFetch('/api/projects');
-        const currentVal = el.projectSelect.value;
-        el.projectSelect.innerHTML = '<option value="">— Select a run —</option>';
-        projects.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.task_id;
-            const label = p.simulate ? 'Sim' : (p.model || 'llama3.2:latest');
-            opt.textContent = `${p.acquirer} · ${p.created_at} [${p.status}] (${label})`;
-            el.projectSelect.appendChild(opt);
-        });
-        el.projectSelect.value = currentVal;
-    } catch (e) {
-        console.error('loadProjects:', e);
-    }
-}
-
-async function handleProjectChange() {
-    const taskId = el.projectSelect.value;
-    stopPolling();
-
-    if (!taskId) {
-        state.taskId = null;
-        state.report = null;
-        el.deleteBtn.classList.add('hidden');
-        showView('welcome');
-        return;
-    }
-
-    state.taskId = taskId;
-    el.deleteBtn.classList.remove('hidden');
-
-    try {
-        const data = await apiFetch(`/api/status/${taskId}`);
-        if (data.status === 'completed') {
-            await loadReport(taskId);
-        } else if (data.status === 'failed') {
-            resetRunner();
-            updateRunner(data);
-            showView('runner');
-        } else {
-            resetRunner();
-            updateRunner(data);
-            showView('runner');
-            startPolling(taskId);
-        }
-    } catch (e) {
-        alert('Failed to load project: ' + e.message);
-    }
-}
-
-async function handleDelete() {
-    if (!state.taskId) return;
-    if (!confirm('Delete this M&A evaluation run permanently?')) return;
-    try {
-        await apiFetch(`/api/projects/${state.taskId}`, { method: 'DELETE' });
-        el.projectSelect.value = '';
-        state.taskId = null;
-        state.report = null;
-        el.deleteBtn.classList.add('hidden');
-        await loadProjects();
-        showView('welcome');
-    } catch (e) {
-        alert('Delete failed: ' + e.message);
-    }
-}
-
-// ── Form Submit ────────────────────────────────────────────
-async function handleSubmit(e) {
-    e.preventDefault();
-
-    const acquirer = el.acquirer.value.trim();
-    if (!acquirer) return;
-
-    const simulate = el.simulate.checked;
-    const model = el.ollamaModel.value.trim() || 'llama3.2:latest';
-
-    setRunBtnLoading(true);
-
-    const payload = {
-        acquirer,
-        industry_focus: el.industryFocus.value.trim() || null,
-        geography_preference: el.geographyPref.value.trim() || null,
-        revenue_range: el.revenueRange.value.trim() || null,
-        acquisition_budget: el.acqBudget.value.trim() || null,
-        strategic_goals: el.strategicGoals.value.trim() || null,
-        technology_areas: el.techAreas.value.trim() || null,
-        risk_appetite: el.riskAppetite.value,
-        time_horizon: el.timeHorizon.value.trim() || null,
-        model,
-        simulate,
-    };
-
-    try {
-        const data = await apiFetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-
-        state.taskId = data.task_id;
-        el.providerBadge.textContent = simulate ? 'SIMULATION' : model;
-
-        resetRunner();
-        showView('runner');
-        startPolling(data.task_id);
-
-        await loadProjects();
-        el.projectSelect.value = data.task_id;
-        el.deleteBtn.classList.remove('hidden');
-    } catch (err) {
-        alert('Failed to start analysis: ' + err.message);
-    } finally {
-        setRunBtnLoading(false);
-    }
-}
-
-function setRunBtnLoading(loading) {
-    el.runBtn.disabled = loading;
-    el.runBtnText.textContent = loading ? 'Launching Agents...' : 'Launch M&A Evaluation';
-    el.runBtnSpinner.classList.toggle('hidden', !loading);
-    el.runBtnIcon.classList.toggle('hidden', loading);
-}
-
-// ── Polling ────────────────────────────────────────────────
-function startPolling(taskId) {
-    stopPolling();
-    state.pollTimer = setInterval(async () => {
-        try {
-            const data = await apiFetch(`/api/status/${taskId}`);
-            updateRunner(data);
-
-            if (data.status === 'completed') {
-                stopPolling();
-                await loadReport(taskId);
-            } else if (data.status === 'failed') {
-                stopPolling();
-                el.pipelineBadgeText.textContent = 'Failed';
-                el.pipelineBadge.style.borderColor = 'rgba(239,68,68,0.4)';
-                el.progressFill.style.background = 'var(--red)';
-            }
-        } catch (e) {
-            console.error('poll error:', e);
-        }
-    }, 1500);
-}
-
-function stopPolling() {
-    if (state.pollTimer) {
-        clearInterval(state.pollTimer);
-        state.pollTimer = null;
-    }
-}
-
-function resetRunner() {
-    el.progressPct.textContent = '0%';
-    el.progressFill.style.width = '0%';
-    el.terminalBody.innerHTML = '<div class="tline accent">&gt; Spawning multi-agent M&A pipeline...</div>';
-    document.querySelectorAll('.flow-node, .flow-sub, .flow-group, .flow-arrow').forEach(n => {
-        n.classList.remove('active', 'done');
+  try {
+    const projects = await fetch('/api/projects').then(r => r.json());
+    const sel = document.getElementById('savedProjects');
+    sel.innerHTML = '<option value="">— Select saved report —</option>';
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.task_id;
+      const date = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const tag  = p.mode === 'discovery' ? '[discover]' : '[profile]';
+      const sim  = p.simulate ? ' [sim]' : '';
+      opt.textContent = `${p.company || 'Unknown'} ${tag}${sim} · ${date}`;
+      sel.appendChild(opt);
     });
-    el.pipelineBadgeText.textContent = 'Running';
-    el.pipelineBadge.style.borderColor = '';
-    el.progressFill.style.background = '';
+  } catch (e) { console.error('loadProjects:', e); }
 }
 
-function updateRunner(data) {
-    el.pipelineStatusText.textContent = data.current_agent || 'Initializing...';
-    el.progressPct.textContent = `${data.progress}%`;
-    el.progressFill.style.width = `${data.progress}%`;
-    el.providerBadge.textContent = data.simulate ? 'SIMULATION' : (data.model || 'llama3.2:latest');
+async function loadProject(taskId) {
+  if (!taskId) return;
+  const status = await fetch(`/api/status/${taskId}`).then(r => r.json());
+  if (status.status !== 'completed') { alert(`Status: ${status.status}`); return; }
+  const report = await fetch(`/api/report/${taskId}`).then(r => r.json());
+  state.report = report; state.taskId = taskId;
+  if (status.mode === 'discovery') showDiscovery(report, status);
+  else                             showReport(status.company || report.company, status);
+}
 
-    // Logs
-    el.terminalBody.innerHTML = '';
-    (data.logs || []).forEach(log => {
-        const div = document.createElement('div');
-        div.className = 'tline';
-        if (log.includes('CRITICAL') || log.includes('ERROR') || log.includes('✗')) div.classList.add('error');
-        else if (log.includes('✓') || log.includes('completed') || log.includes('Completed')) div.classList.add('success');
-        else if (log.includes('Initializing') || log.includes('Starting') || log.includes('starting') || log.includes('Spawning')) div.classList.add('accent');
-        else if (log.includes('Agent') || log.includes('Evaluating')) div.classList.add('info');
-        div.textContent = `> ${log}`;
-        el.terminalBody.appendChild(div);
+// ── Submit handlers ───────────────────────────────────────────────────────────
+async function handleProfile(e) {
+  e.preventDefault();
+  const company  = document.getElementById('companyInput').value.trim();
+  const model    = document.getElementById('modelInput').value.trim() || 'llama3.2:latest';
+  const simulate = document.getElementById('simulateToggle').checked;
+  if (!company) return;
+  document.getElementById('submitBtn').disabled = true;
+  try {
+    const d = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company, model, simulate }),
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); });
+    state.taskId = d.task_id;
+    showProgress(company);
+    startPoll();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+    document.getElementById('submitBtn').disabled = false;
+  }
+}
+
+async function handleDiscover(e) {
+  e.preventDefault();
+  const acquirer = document.getElementById('acquirerInput').value.trim();
+  const model    = document.getElementById('discoverModelInput').value.trim() || 'llama3.2:latest';
+  const simulate = document.getElementById('discoverSimulate').checked;
+  if (!acquirer) return;
+  document.getElementById('discoverBtn').disabled = true;
+  const payload = {
+    acquirer,
+    sector:         document.getElementById('thesisSector').value.trim(),
+    geography:      document.getElementById('thesisGeo').value.trim(),
+    capability_gap: document.getElementById('thesisCap').value.trim(),
+    revenue_range:  document.getElementById('thesisRev').value.trim(),
+    model, simulate,
+  };
+  try {
+    const d = await fetch('/api/discover', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); });
+    state.taskId = d.task_id;
+    showProgress(acquirer + ' · M&A Discovery');
+    startPoll();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+    document.getElementById('discoverBtn').disabled = false;
+  }
+}
+
+// ── Polling ───────────────────────────────────────────────────────────────────
+function startPoll() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(poll, 2500);
+}
+
+async function poll() {
+  if (!state.taskId) return;
+  const data = await fetch(`/api/status/${state.taskId}`).then(r => r.json()).catch(() => null);
+  if (!data) return;
+  updateProgress(data);
+  updateFlow(data.current_agent || '', data.progress || 0, data.mode || 'profile');
+  if (data.status === 'completed') {
+    clearInterval(state.pollTimer);
+    const report = await fetch(`/api/report/${state.taskId}`).then(r => r.json());
+    state.report = report;
+    if (data.mode === 'discovery') showDiscovery(report, data);
+    else                           showReport(data.company || report.company, data);
+    loadProjects();
+    document.getElementById('submitBtn').disabled  = false;
+    document.getElementById('discoverBtn').disabled = false;
+  } else if (data.status === 'failed') {
+    clearInterval(state.pollTimer);
+    const logs = data.logs || [];
+    alert('Analysis failed:\n' + (logs[logs.length - 1] || 'Unknown error'));
+    showEmpty();
+    document.getElementById('submitBtn').disabled  = false;
+    document.getElementById('discoverBtn').disabled = false;
+  }
+}
+
+function updateProgress(d) {
+  document.getElementById('progressCompany').textContent = d.company || 'Analyzing…';
+  document.getElementById('progressAgent').textContent   = d.current_agent || 'Running…';
+  const pct = d.progress || 0;
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressPct').textContent  = pct + '%';
+  const logEl = document.getElementById('progressLog');
+  logEl.innerHTML = (d.logs || []).map(l => `<div class="log-line">${esc(l)}</div>`).join('');
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function updateFlow(label, progress, mode) {
+  const l = label.toLowerCase();
+  if (mode === 'discovery') {
+    ['fd0','fd1','fd2','fd3','fd4'].forEach(id => {
+      const el = document.getElementById(id); if (!el) return;
+      el.classList.remove('active','done');
     });
-    el.terminalBody.scrollTop = el.terminalBody.scrollHeight;
-
-    updateFlowDiagram(data.current_agent, data.progress);
-}
-
-function updateFlowDiagram(agent, progress) {
-    const setNode = (id, state) => {
-        const el = $(id);
-        if (!el) return;
-        el.classList.remove('active', 'done');
-        if (state) el.classList.add(state);
-    };
-
-    const setArrow = (id, done) => {
-        const el = $(id);
-        if (!el) return;
-        el.classList.toggle('done', done);
-    };
-
-    // Node 1
-    if (progress >= 20) { setNode('fnode-1', 'done'); setArrow('farrow-1', true); }
-    else if (agent?.includes('Strategy')) setNode('fnode-1', 'active');
-
-    // Node 2
-    if (progress >= 35) { setNode('fnode-2', 'done'); setArrow('farrow-2', true); }
-    else if (agent?.includes('Industry')) setNode('fnode-2', 'active');
-
-    // Node 3
-    if (progress >= 45) setNode('fnode-3', 'done');
-    else if (agent?.includes('Discovery') || agent?.includes('Target Discovery')) setNode('fnode-3', 'active');
-
-    // Deep group
-    // Order: 4=Tech, 5=Financial, 6=Risk (parallel) → 7=Synergies → 8=Devil's Advocate
-    if (progress >= 90) {
-        $('fgroup-deep').classList.remove('active');
-        $('fgroup-deep').classList.add('done');
-        ['fsub-4','fsub-5','fsub-6','fsub-7','fsub-8'].forEach(id => setNode(id, 'done'));
-    } else if (progress >= 45) {
-        $('fgroup-deep').classList.add('active');
-        ['fsub-4','fsub-5','fsub-6','fsub-7','fsub-8'].forEach(id => setNode(id, null));
-
-        if (agent?.includes('Synerg')) {
-            // Agents 4-6 done, synergies running
-            setNode('fsub-4', 'done'); setNode('fsub-5', 'done'); setNode('fsub-6', 'done');
-            setNode('fsub-7', 'active');
-        } else if (agent?.includes('Devil') || agent?.includes('Thesis') || agent?.includes('Challenging')) {
-            setNode('fsub-4', 'done'); setNode('fsub-5', 'done'); setNode('fsub-6', 'done');
-            setNode('fsub-7', 'done'); setNode('fsub-8', 'active');
-        } else {
-            // Parallel phase: Tech / Financial / Risk all active together
-            setNode('fsub-4', 'active');
-            setNode('fsub-5', 'active');
-            setNode('fsub-6', 'active');
-        }
+    if (progress >= 100) {
+      ['fd0','fd1','fd2','fd3','fd4'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+    } else if (l.includes('synergy')) {
+      ['fd0','fd1','fd2','fd3'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+      document.getElementById('fd4')?.classList.add('active');
+    } else if (l.includes('target') || l.includes('profile')) {
+      ['fd0','fd1','fd2'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+      document.getElementById('fd3')?.classList.add('active');
+    } else if (l.includes('discovery') || l.includes('extract')) {
+      ['fd0','fd1'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+      document.getElementById('fd2')?.classList.add('active');
+    } else if (l.includes('acquirer')) {
+      document.getElementById('fd0')?.classList.add('done');
+      document.getElementById('fd1')?.classList.add('active');
+    } else {
+      document.getElementById('fd0')?.classList.add('active');
     }
-
-    // Node 9
-    if (progress === 100) setNode('fnode-9', 'done');
-    else if (agent?.includes('Partner')) setNode('fnode-9', 'active');
-}
-
-// ── Report ─────────────────────────────────────────────────
-async function loadReport(taskId) {
-    try {
-        const results = await apiFetch(`/api/report/${taskId}`);
-        const status = await apiFetch(`/api/status/${taskId}`);
-        state.report = results;
-        state.targetIdx = 0;
-        renderReport(results, status);
-        showView('report');
-        switchTab('exec');
-        loadProjects();
-    } catch (e) {
-        alert('Failed to load report: ' + e.message);
-    }
-}
-
-function renderReport(data, status) {
-    // Title + meta
-    const acquirerName = el.projectSelect.options[el.projectSelect.selectedIndex]?.text?.split(' ·')[0] || 'Acquirer';
-    el.reportTitle.innerHTML = `Strategic M&A Report: <span class="gradient-text">${acquirerName}</span>`;
-    el.reportDate.textContent = `Generated ${status?.created_at || new Date().toLocaleString()}`;
-    el.reportProviderBadge.textContent = status?.simulate ? 'Simulation' : (status?.model || 'llama3.2:latest');
-
-    // ── Exec Summary ──
-    el.acquirerRationale.textContent = data.strategy.acquisition_rationale;
-
-    el.strategicPriorities.innerHTML = '';
-    data.strategy.strategic_priorities.forEach(p => addLi(el.strategicPriorities, p));
-
-    fillGapList(el.gapCapability, data.strategy.gaps.capability_gaps);
-    fillGapList(el.gapMarket, data.strategy.gaps.market_gaps);
-    fillGapList(el.gapTech, data.strategy.gaps.technology_gaps);
-    fillGapList(el.gapCustomer, data.strategy.gaps.customer_gaps);
-    fillGapList(el.gapGeo, data.strategy.gaps.geographic_gaps);
-
-    el.roadmap.innerHTML = '';
-    data.partner.ideal_roadmap_milestones.forEach(m => {
-        const sep = m.indexOf(': ');
-        const period = sep !== -1 ? m.slice(0, sep) : m;
-        const desc = sep !== -1 ? m.slice(sep + 2) : '';
-        const item = document.createElement('div');
-        item.className = 'roadmap-item';
-        item.innerHTML = `<div class="roadmap-dot"></div><div class="roadmap-period">${period}</div>${desc ? `<div class="roadmap-desc">${desc}</div>` : ''}`;
-        el.roadmap.appendChild(item);
+    return;
+  }
+  // Profile mode
+  ['fn0','fn1','fn2','fn3','fn4','fn5','fn6','fn7','fn8','fn9'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.classList.remove('active','done');
+  });
+  if (progress >= 100) {
+    ['fn0','fn1','fn2','fn3','fn4','fn5','fn6','fn7','fn8','fn9'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.classList.add('done');
     });
-
-    // ── Industry ──
-    el.industryStructure.textContent = data.industry.structure;
-    fillList(el.consolidationTrends, data.industry.consolidation_trends);
-    fillList(el.growthSegments, data.industry.attractive_categories);
-    fillList(el.emergingTech, data.industry.emerging_technologies);
-    fillList(el.disruptionRisks, data.industry.disruption_risks);
-
-    // ── Longlist ──
-    el.longlistBody.innerHTML = '';
-    data.longlist.forEach(t => {
-        const tr = document.createElement('tr');
-        if (t.evaluated) tr.className = 'row-hi';
-
-        const riskBadge = t.risk_score !== 'N/A'
-            ? `<span class="badge ${riskClass(parseInt(t.risk_score))}">${t.risk_score}/10</span>`
-            : '<span class="badge badge-purple">N/A</span>';
-
-        const synBadge = t.synergy_score !== 'N/A'
-            ? `<span class="badge ${synergyClass(parseFloat(t.synergy_score))}">${t.synergy_score}/100</span>`
-            : '<span class="badge badge-purple">N/A</span>';
-
-        tr.innerHTML = `
-            <td><strong>${t.rank}</strong></td>
-            <td><strong>${t.company}</strong></td>
-            <td>${t.industry}</td>
-            <td><span class="badge badge-blue">${t.strategic_fit}/10</span></td>
-            <td>${synBadge}</td>
-            <td>${riskBadge}</td>
-            <td>${t.evaluated
-                ? `<button class="btn-sm-outline" onclick="viewTarget('${t.company}')">View Details</button>`
-                : '<span style="font-size:11px;color:var(--text-3)">Not shortlisted</span>'
-            }</td>`;
-        el.longlistBody.appendChild(tr);
-    });
-
-    // ── Deep Dive ──
-    renderTargetList();
-    renderTargetDetail();
-
-    // ── Partner ──
-    el.partnerCritique.textContent = data.partner.critique;
-    fillList(el.hiddenOpportunities, data.partner.hidden_opportunities);
-    fillList(el.hiddenRisks, data.partner.hidden_risks);
-
-    el.partnerQA.innerHTML = '';
-    Object.entries(data.partner.final_questions).forEach(([q, a]) => {
-        const div = document.createElement('div');
-        div.className = 'qa-entry';
-        div.innerHTML = `<div class="qa-q">Q: ${q}</div><div class="qa-a">${a}</div>`;
-        el.partnerQA.appendChild(div);
-    });
+  } else if (l.includes('strategic') || l.includes('agent 9')) {
+    ['fn0','fn1','fn2','fn3','fn4','fn5','fn6','fn7','fn8'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+    document.getElementById('fn9')?.classList.add('active');
+  } else if (l.includes('parallel') || ['fn3','fn4','fn5','fn6','fn7','fn8'].some(id => l.includes(id.slice(-1)))) {
+    ['fn0','fn1','fn2'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('done'); });
+    ['fn3','fn4','fn5','fn6','fn7','fn8'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('active'); });
+  } else if (l.includes('services') || l.includes('agent 2')) {
+    document.getElementById('fn0')?.classList.add('done');
+    document.getElementById('fn1')?.classList.add('done');
+    document.getElementById('fn2')?.classList.add('active');
+  } else if (l.includes('company') || l.includes('agent 1')) {
+    document.getElementById('fn0')?.classList.add('done');
+    document.getElementById('fn1')?.classList.add('active');
+  } else if (l.includes('data') || l.includes('scraping') || l.includes('acquisition')) {
+    document.getElementById('fn0')?.classList.add('active');
+  }
 }
 
-function renderTargetList() {
-    el.targetList.innerHTML = '';
-    state.report.top_evaluations.forEach((te, i) => {
-        const rec = state.report.partner.recommendations_table.find(r => r.company_name === te.profile.name);
-        const tier = rec?.tier?.split(':')[0] || 'Tier 3';
-        const card = document.createElement('div');
-        card.className = `target-card${i === state.targetIdx ? ' active' : ''}`;
-        card.innerHTML = `
-            <div class="tc-header">
-                <span class="tc-name">${te.profile.name}</span>
-                <span class="tc-score">${te.weighted_synergy_score}</span>
-            </div>
-            <div class="tc-meta">${te.profile.headquarters} · ${tier}</div>`;
-        card.onclick = () => {
-            state.targetIdx = i;
-            renderTargetList();
-            renderTargetDetail();
-        };
-        el.targetList.appendChild(card);
-    });
+// ── View transitions ──────────────────────────────────────────────────────────
+function showEmpty() {
+  document.getElementById('emptyState').classList.remove('hidden');
+  document.getElementById('progressState').classList.add('hidden');
+  document.getElementById('reportState').classList.add('hidden');
+  document.getElementById('discoveryState').classList.add('hidden');
 }
 
-function renderTargetDetail() {
-    const te = state.report.top_evaluations[state.targetIdx];
-    if (!te) return;
+function showProgress(label) {
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('progressState').classList.remove('hidden');
+  document.getElementById('reportState').classList.add('hidden');
+  document.getElementById('discoveryState').classList.add('hidden');
+  document.getElementById('progressCompany').textContent = label;
+  document.getElementById('progressAgent').textContent   = 'Initializing…';
+  document.getElementById('progressBar').style.width     = '0%';
+  document.getElementById('progressPct').textContent     = '0%';
+  document.getElementById('progressLog').innerHTML       = '';
+}
 
-    const rec = state.report.partner.recommendations_table.find(r => r.company_name === te.profile.name);
-    const tier = rec?.tier || 'Tier 3';
-    const tierShort = tier.split(':')[0];
+function renderSourceChips(containerId, report) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  // Detect which sources contributed data (from first target or top-level)
+  const scraped = report._scraped_meta || {};
+  const llmSources = report._llm_sources || [];
+  const allSources = [
+    { label: 'Website',   active: scraped.website_pages > 0 },
+    { label: 'Wikipedia', active: scraped.wiki_ok },
+    { label: 'DDG',       active: scraped.search_count > 0 },
+    { label: 'yFinance',  active: scraped.fin_ok },
+    { label: 'OpenAI',    active: llmSources.includes('OpenAI gpt-4o-mini') || llmSources.includes('OpenAI') },
+    { label: 'Gemini',    active: llmSources.includes('Gemini gemini-1.5-flash') || llmSources.includes('Gemini') },
+  ];
+  el.innerHTML = allSources.map(s =>
+    `<span class="source-chip ${s.active ? 'active' : ''}">${esc(s.label)}</span>`
+  ).join('');
+}
 
-    el.targetDetail.innerHTML = `
-        <!-- Header -->
-        <div class="pcard">
-            <div class="detail-header">
-                <div>
-                    <div class="detail-company">${te.profile.name}</div>
-                    <div class="detail-meta">${te.profile.industry} · ${te.profile.headquarters} · ${te.profile.market_position}</div>
-                </div>
-                <div class="score-ring">
-                    <div class="score-circle">${te.weighted_synergy_score}</div>
-                    <div class="score-label">Synergy Rating</div>
-                    <div class="score-tier">${tierShort}</div>
-                </div>
-            </div>
-            <div class="meta-grid">
-                <div class="meta-item"><div class="meta-label">Revenue (Est.)</div><div class="meta-value">${te.financial.target_financials.revenue}</div></div>
-                <div class="meta-item"><div class="meta-label">EBITDA (Est.)</div><div class="meta-value">${te.financial.target_financials.ebitda}</div></div>
-                <div class="meta-item"><div class="meta-label">Valuation Range</div><div class="meta-value">${te.financial.target_financials.valuation_estimate}</div></div>
-                <div class="meta-item"><div class="meta-label">YoY Growth</div><div class="meta-value">${te.financial.target_financials.growth_profile}</div></div>
-            </div>
-            <div class="meta-grid" style="grid-template-columns:1fr 1fr">
-                <div class="meta-item"><div class="meta-label">Key Products</div><div class="meta-value" style="font-size:12px">${te.profile.key_products.join(', ')}</div></div>
-                <div class="meta-item"><div class="meta-label">Core Capabilities</div><div class="meta-value" style="font-size:12px">${te.profile.core_capabilities.join(', ')}</div></div>
-            </div>
-            ${rec ? `<div class="ib-rec"><strong>IB Recommendation:</strong> ${rec.rationalization}</div>` : ''}
+function showReport(company, meta) {
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('progressState').classList.add('hidden');
+  document.getElementById('reportState').classList.remove('hidden');
+  document.getElementById('discoveryState').classList.add('hidden');
+  document.getElementById('reportCompanyName').textContent = company;
+  const sim = meta.simulate ? ' · Simulation' : ' · Grounded';
+  document.getElementById('reportMeta').textContent = `Accenture V&A Intelligence${sim} · ${meta.model || ''}`;
+  renderSourceChips('reportSources', state.report || {});
+  renderProfile(state.report);
+  // Reset to first tab
+  document.querySelectorAll('#reportState .rtab').forEach((b,i) => b.classList.toggle('active', i === 0));
+  document.querySelectorAll('#reportState .rtab-panel').forEach((p,i) => {
+    p.classList.toggle('hidden', i !== 0);
+    p.classList.toggle('active', i === 0);
+  });
+}
+
+function showDiscovery(report, meta) {
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('progressState').classList.add('hidden');
+  document.getElementById('reportState').classList.add('hidden');
+  document.getElementById('discoveryState').classList.remove('hidden');
+  document.getElementById('discAcquirerName').textContent = (report.acquirer || '') + ' — M&A Target Discovery';
+  const sim = meta.simulate ? ' · Simulation' : ' · Grounded';
+  const t   = report.thesis || {};
+  const thesis = [t.sector, t.geography, t.capability_gap].filter(Boolean).join(' · ');
+  document.getElementById('discMeta').textContent = `${thesis}${sim}`;
+  renderSourceChips('discSources', report);
+  renderDiscovery(report);
+}
+
+function switchTab(tabId, btn) {
+  const container = btn ? btn.closest('.report-state') : document.getElementById('reportState');
+  container.querySelectorAll('.rtab').forEach(b => b.classList.remove('active'));
+  container.querySelectorAll('.rtab-panel').forEach(p => { p.classList.add('hidden'); p.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById(`tab-${tabId}`);
+  if (panel) { panel.classList.remove('hidden'); panel.classList.add('active'); }
+}
+
+function newAnalysis() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.taskId = null; state.report = null;
+  showEmpty();
+  document.getElementById('analyzeForm').reset();
+  document.getElementById('discoverForm').reset();
+  document.getElementById('modelInput').value = 'llama3.2:latest';
+  document.getElementById('discoverModelInput').value = 'llama3.2:latest';
+  document.getElementById('submitBtn').disabled  = false;
+  document.getElementById('discoverBtn').disabled = false;
+}
+
+function exportReport() {
+  if (!state.report) return;
+  const name = (state.report.company || state.report.acquirer || 'report').replace(/\s+/g, '_');
+  const blob = new Blob([JSON.stringify(state.report, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `va_intelligence_${name}.json`;
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROFILE RENDERERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderProfile(r) {
+  if (!r) return;
+  renderS1(r.overview || {});
+  renderS2(r.overview || {});
+  renderS3(r.services || {});
+  renderS4(r.locations || {});
+  renderS5(r.clients || {});
+  renderS6(r.financials || {});
+  renderS7(r.leadership || {});
+  renderS8S9(r.glassdoor_news || {});
+  renderS10(r.workforce || {});
+  renderS11(r.strategic || {});
+}
+
+function renderS1(ov) {
+  document.getElementById('s1-overview').textContent = ov.business_overview || 'Not found in allowed sources.';
+}
+
+function renderS2(ov) {
+  const grid = document.getElementById('s2-grid');
+  const fields = [
+    ['Legal / Trade Name', ov.legal_name],
+    ['Company Type',       ov.company_type],
+    ['Year Founded',       ov.year_founded],
+    ['Headquarters',       ov.hq],
+    ['Global Offices',     ov.global_offices],
+    ['Employees',          ov.employee_count],
+    ['Sector / Industry',  ov.sector_industry],
+    ['Business Model',     ov.business_model],
+    ['Website',            ov.website_url ? `<a href="${esc(ov.website_url)}" target="_blank" rel="noopener">${esc(ov.website_url)}</a>` : null],
+    ['LinkedIn',           ov.linkedin_url ? `<a href="${esc(ov.linkedin_url)}" target="_blank" rel="noopener">View Profile</a>` : null],
+  ];
+  if ((ov.certifications_awards || []).length) {
+    fields.push(['Certifications & Awards', ov.certifications_awards.join(', ')]);
+  }
+  grid.innerHTML = fields.map(([k, v]) => {
+    const isLink = typeof v === 'string' && v.startsWith('<a');
+    const display = v ? (isLink ? v : esc(String(v))) : 'Not found in allowed sources';
+    return `<div class="kv-item"><div class="kv-key">${esc(k)}</div><div class="kv-val">${display}</div></div>`;
+  }).join('');
+}
+
+function renderS3(sv) {
+  const list = document.getElementById('s3-services');
+  const items = sv.services_solutions_products || [];
+  list.innerHTML = items.length
+    ? items.map(s => `<div class="service-item"><div class="service-name">${esc(s.name||'')}</div><div class="service-desc">${esc(s.description||'')}</div></div>`).join('')
+    : '<p class="section-prose">Not found in allowed sources.</p>';
+}
+
+function renderS4(loc) {
+  const el = document.getElementById('s4-locations');
+  const regions = [
+    { label: 'AMER', items: loc.amer_offices || [] },
+    { label: 'EMEA', items: loc.emea_offices || [] },
+    { label: 'APAC', items: loc.apac_offices || [] },
+    { label: 'Delivery Centers', items: loc.delivery_centers || [] },
+  ];
+  const hq = loc.headquarters ? `<div class="kv-item" style="margin-bottom:10px"><div class="kv-key">Headquarters</div><div class="kv-val">${esc(loc.headquarters)}</div></div>` : '';
+  const parent = loc.parent_company ? `<div class="kv-item" style="margin-top:10px"><div class="kv-key">Parent Company</div><div class="kv-val">${esc(loc.parent_company)}</div></div>` : '';
+  const grid = regions.filter(r => r.items.length).map(r =>
+    `<div class="region-block"><div class="region-label">${esc(r.label)}</div><ul class="region-list">${r.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`
+  ).join('');
+  el.innerHTML = hq + `<div class="region-grid">${grid}</div>` + parent;
+}
+
+function renderS5(cli) {
+  const el = document.getElementById('s5-clients');
+  const clients = cli.named_clients || [];
+  const segs    = cli.client_segments || [];
+  const cases   = cli.anonymous_case_studies || '';
+  const clientHtml = clients.length
+    ? `<div class="subsection-title">Named Clients</div><div class="client-tags">${clients.map(c => `<span class="client-tag">${esc(c)}</span>`).join('')}</div>`
+    : '<p class="section-prose" style="margin-bottom:10px">Client names not disclosed on Official Website.</p>';
+  const segHtml = segs.length
+    ? `<div class="subsection-title">Market Segments</div><div class="segment-tags">${segs.map(s => `<span class="segment-tag">${esc(s)}</span>`).join('')}</div>`
+    : '';
+  const caseHtml = cases
+    ? `<div class="kv-item" style="margin-top:10px"><div class="kv-key">Anonymous Case Studies</div><div class="kv-val">${esc(cases)}</div></div>`
+    : '';
+  el.innerHTML = clientHtml + segHtml + caseHtml;
+}
+
+function renderS6(fin) {
+  const el = document.getElementById('s6-financials');
+  const summary = `<div class="fin-summary">
+    <div class="fin-card"><div class="fin-card-label">Revenue</div><div class="fin-card-val">${esc(fin.revenue||'N/A')}</div></div>
+    <div class="fin-card"><div class="fin-card-label">Revenue / Employee</div><div class="fin-card-val">${esc(fin.revenue_per_employee||'N/A')}</div></div>
+    <div class="fin-card"><div class="fin-card-label">Source</div><div class="fin-card-val" style="font-size:11px">${esc(fin.revenue_source||'N/A')}</div></div>
+  </div>`;
+  const rounds = fin.funding_rounds || [];
+  const roundsHtml = rounds.length
+    ? `<div class="subsection-title">Funding Rounds</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Round</th><th>Amount</th><th>Lead Investors</th></tr></thead><tbody>${rounds.map(r => `<tr><td>${esc(r.date||'')}</td><td>${esc(r.round_type||'')}</td><td>${esc(r.amount||'')}</td><td>${esc(r.lead_investors||'')}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="subsection-title">Funding Rounds</div><p class="section-prose">No funding rounds in allowed sources.</p>';
+  const acqs = fin.acquisitions || [];
+  const acqHtml = acqs.length
+    ? `<div class="subsection-title">Acquisitions (last 10 years)</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Company</th><th>Descriptor</th><th>Year</th><th>Value</th><th>Headcount</th><th>Rationale</th></tr></thead><tbody>${acqs.map(a => `<tr><td>${esc(a.company_name||'')}</td><td>${esc(a.descriptor||'')}</td><td>${esc(a.year||'')}</td><td>${esc(a.deal_value||'')}</td><td>${esc(a.headcount_added||'')}</td><td>${esc(a.strategic_rationale||'')}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="subsection-title">Acquisitions</div><p class="section-prose">No acquisitions found in allowed sources in the past 10 years.</p>';
+  const partners = fin.key_partnerships || [];
+  const partnerHtml = partners.length
+    ? `<div class="subsection-title">Key Partnerships</div><div class="partner-chips">${partners.map(p => `<span class="partner-chip">${esc(p)}</span>`).join('')}</div>`
+    : '';
+  el.innerHTML = summary + roundsHtml + acqHtml + partnerHtml;
+}
+
+function renderS7(lead) {
+  const el = document.getElementById('s7-leadership');
+  const leaders = lead.leaders || [];
+  el.innerHTML = leaders.length
+    ? `<div class="leaders-grid">${leaders.map(l => `<div class="leader-card"><div class="leader-name">${esc(l.full_name||'')}</div><div class="leader-title">${esc(l.title||'')}</div><div class="leader-prev">${esc(l.previous_role||'')}</div>${l.accenture_alumni ? '<span class="alumni-badge">Accenture Alumni</span>' : ''}</div>`).join('')}</div>`
+    : '<p class="section-prose">Not found in allowed sources.</p>';
+}
+
+function renderS8S9(gn) {
+  const s8 = document.getElementById('s8-glassdoor');
+  const s9 = document.getElementById('s9-news');
+  const rating  = gn.glassdoor_rating       || 'Not visible on Glassdoor profile';
+  const reviews = gn.glassdoor_total_reviews || '';
+  const isNum   = !isNaN(parseFloat(rating));
+  s8.innerHTML = `<div class="glassdoor-box">${isNum
+    ? `<div class="gd-rating-num">${esc(rating)}</div><div><div class="gd-label">Overall Rating</div><div class="gd-reviews">${esc(reviews)} reviews</div></div>`
+    : `<div class="gd-label">${esc(rating)}</div>`}</div>`;
+  const news = gn.recent_news || [];
+  s9.innerHTML = news.length
+    ? `<div class="news-list">${news.map(n => `<div class="news-item"><div class="news-date">${esc(n.month_year||'')}</div><div class="news-text">${esc(n.description||'')}</div></div>`).join('')}</div>`
+    : '<p class="section-prose">Not found in allowed sources.</p>';
+}
+
+function renderS10(wf) {
+  const el = document.getElementById('s10-workforce');
+  const fns    = wf.functions  || [];
+  const locs   = wf.locations  || [];
+  const skills = wf.top_skills || [];
+  const open   = wf.open_positions || 'Not found in allowed sources';
+  const mkBars = (items, kName, pName) => items.map(item => {
+    const pct = parseFloat(String(item[pName]||'0').replace('%','')) || 0;
+    return `<div class="wf-bar-row"><div class="wf-bar-label" title="${esc(item[kName]||'')}">${esc(item[kName]||'')}</div><div class="wf-bar-track"><div class="wf-bar-fill" style="width:${Math.min(pct,100)}%"></div></div><div class="wf-bar-pct">${esc(item[pName]||'')}</div></div>`;
+  }).join('');
+  el.innerHTML = `<div class="workforce-grid"><div class="wf-block"><div class="wf-title">Functions</div>${mkBars(fns,'function_name','percentage')}</div><div class="wf-block"><div class="wf-title">Locations</div>${mkBars(locs,'location','percentage')}</div></div><div class="subsection-title">Top Skills</div><div class="skills-wrap">${skills.map(s => `<span class="skill-tag">${esc(s)}</span>`).join('')}</div><div class="kv-item" style="margin-top:12px"><div class="kv-key">Open Positions</div><div class="kv-val">${esc(String(open))}</div></div>`;
+}
+
+function renderS11(st) {
+  const el = document.getElementById('s11-strategic');
+  const strengths = st.strategic_strengths || [];
+  const risks     = st.key_risks           || [];
+  el.innerHTML = `
+    <div class="strategic-grid">
+      <div class="strategic-col"><div class="strategic-col-title">Strategic Strengths</div>${strengths.map(s => `<div class="strategic-item strength">${esc(s)}</div>`).join('')}</div>
+      <div class="strategic-col"><div class="strategic-col-title">Key Risks</div>${risks.map(r => `<div class="strategic-item risk">${esc(r)}</div>`).join('')}</div>
+    </div>
+    <div class="prose-block"><div class="prose-block-title">Strategic Fit for Accenture</div><p>${esc(st.strategic_fit_for_accenture||'Not found in allowed sources.')}</p></div>
+    <div class="prose-block"><div class="prose-block-title">M&amp;A Suitability</div><p>${esc(st.ma_suitability||'Not found in allowed sources.')}</p></div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISCOVERY RENDERERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderDiscovery(report) {
+  const targets = report.targets || [];
+  const tabBar  = document.getElementById('targetTabBar');
+  const panels  = document.getElementById('targetPanels');
+
+  if (!targets.length) {
+    panels.innerHTML = '<div class="target-panel active"><p class="section-prose">No targets were discovered. Try broader thesis criteria.</p></div>';
+    tabBar.innerHTML = '';
+    return;
+  }
+
+  tabBar.innerHTML = targets.map((t, i) =>
+    `<button class="rtab ${i===0?'active':''}" onclick="switchDiscoveryTarget(${i}, this)">${esc(t.company||`Target ${i+1}`)}</button>`
+  ).join('');
+
+  panels.innerHTML = targets.map((t, i) => renderTargetPanel(t, i, targets.length)).join('');
+}
+
+function switchDiscoveryTarget(idx, btn) {
+  document.querySelectorAll('#targetTabBar .rtab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.target-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(`target-panel-${idx}`)?.classList.add('active');
+}
+
+function renderTargetPanel(t, idx, total) {
+  const syn  = t.synergy || {};
+  const maxH = Math.max(...(Array.from({length: total}, (_, i) => 0))); // placeholder for bar scaling
+  const synLow  = typeof syn.total_low_usd_m  === 'number' ? `$${syn.total_low_usd_m.toFixed(0)}M`  : 'N/A';
+  const synHigh = typeof syn.total_high_usd_m === 'number' ? `$${syn.total_high_usd_m.toFixed(0)}M` : 'N/A';
+
+  const synTable = (syn.synergy_items || []).map(item => {
+    const conf = (item.confidence_level||'').toLowerCase();
+    const confClass = conf === 'high' ? 'confidence-high' : conf === 'medium' ? 'confidence-medium' : 'confidence-low';
+    const lo = typeof item.estimated_value_low_usd_m  === 'number' ? `$${item.estimated_value_low_usd_m.toFixed(0)}M`  : '–';
+    const hi = typeof item.estimated_value_high_usd_m === 'number' ? `$${item.estimated_value_high_usd_m.toFixed(0)}M` : '–';
+    return `<tr>
+      <td>${esc(item.synergy_type||'')}</td>
+      <td>${esc(item.basis||'')}</td>
+      <td>${esc(lo)} – ${esc(hi)}</td>
+      <td class="${confClass}">${esc(item.confidence_level||'')}</td>
+      <td>Year ${esc(String(item.year_realizable||''))}</td>
+    </tr>`;
+  }).join('');
+
+  const capFills = (syn.capability_gaps_filled||[]).map(c => `<span class="segment-tag">${esc(c)}</span>`).join('');
+  const geoOverlap = (syn.geography_overlap||[]).map(g => `<span class="client-tag">${esc(g)}</span>`).join('');
+  const clientOverlap = (syn.client_overlap||[]).map(c => `<span class="client-tag">${esc(c)}</span>`).join('');
+  const assumptions = (syn.key_assumptions||[]).map((a,i) => `<div class="news-item" style="margin-bottom:4px"><div class="news-date">Assumption ${i+1}</div><div class="news-text">${esc(a)}</div></div>`).join('');
+
+  // Sub-tabs for profile + synergy
+  const panelId = `target-panel-${idx}`;
+  const subId   = `sub-${idx}`;
+
+  return `<div class="target-panel ${idx===0?'active':''}" id="${panelId}">
+
+    <!-- Rank card -->
+    <div class="target-rank">
+      <div class="target-rank-num">#${idx+1}</div>
+      <div>
+        <div class="target-rank-name">${esc(t.company||'')}</div>
+        <div class="target-rank-meta">${[
+          (t.overview||{}).sector_industry,
+          (t.overview||{}).hq,
+          (t.overview||{}).employee_count,
+        ].filter(v => v && v !== 'Not found in allowed sources').map(esc).join(' · ')}</div>
+        <div class="target-synergy-bar">
+          <div class="target-syn-label">Synergy potential</div>
+          <div class="target-syn-track"><div class="target-syn-fill" style="width:75%"></div></div>
+          <div class="target-syn-val">${synLow} – ${synHigh}</div>
         </div>
+        <div style="margin-top:6px;font-size:12px;color:var(--text-2)">${esc(syn.headline_rationale||t.search_rationale||'')}</div>
+      </div>
+    </div>
 
-        <!-- Synergy Bars -->
-        <div class="pcard">
-            <h3 class="pcard-title">Synergy Scoring Breakdown</h3>
-            <div class="bar-chart">
-                ${bar('Strategic Fit (20%)', te.synergies.strategic_fit, 10, 'green')}
-                ${bar('Revenue Synergy (15%)', te.synergies.revenue_synergy.score, 10)}
-                ${bar('Product Synergy (10%)', te.synergies.product_synergy.score, 10)}
-                ${bar('Technology Synergy (10%)', te.technology.technology_synergy_score, 10)}
-                ${bar('Customer Synergy (10%)', te.synergies.customer_synergy.score, 10)}
-                ${bar('Geographic Synergy (10%)', te.synergies.geographic_synergy.score, 10)}
-                ${bar('Financial Feasibility (10%)', te.financial.affordability_score, 10)}
-                ${bar('Risk Discount (10% — lower risk = higher score)', 10 - te.risk.risk_score, 10, 'amber')}
-                ${bar('Cultural Compatibility (5%)', te.devils_advocate.cultural_compatibility_score, 10)}
-            </div>
+    <!-- Sub-tabs -->
+    <div class="sub-tab-bar">
+      <button class="sub-tab active" onclick="switchSubTab('${subId}','synergy',this)">Synergy Model</button>
+      <button class="sub-tab" onclick="switchSubTab('${subId}','profile',this)">Intelligence Profile</button>
+    </div>
+
+    <!-- Synergy sub-panel -->
+    <div class="sub-panel active" id="${subId}-synergy">
+
+      <div class="synergy-summary">
+        <div class="syn-card"><div class="syn-card-label">Synergy Range</div><div class="syn-card-val">${esc(synLow)} – ${esc(synHigh)}</div></div>
+        <div class="syn-card"><div class="syn-card-label">Deal Structure</div><div class="syn-card-val" style="font-size:12px">${esc(syn.deal_structure||'N/A')}</div></div>
+        <div class="syn-card"><div class="syn-card-label">EV / Revenue</div><div class="syn-card-val" style="font-size:12px">${esc(syn.suggested_ev_revenue_multiple||'N/A')}</div></div>
+      </div>
+
+      ${synTable ? `<div class="section-block" style="padding:14px">
+        <div class="section-title" style="font-size:14px;margin-bottom:10px">Quantified Synergy Items</div>
+        <div class="table-wrap"><table class="data-table">
+          <thead><tr><th>Type</th><th>Basis</th><th>Est. Value</th><th>Confidence</th><th>Timeline</th></tr></thead>
+          <tbody>${synTable}</tbody>
+        </table></div>
+      </div>` : ''}
+
+      <div class="twin-row">
+        ${capFills ? `<div class="section-block flex-1"><div class="section-tag">Capability Gaps Filled</div><div class="segment-tags" style="margin-top:8px">${capFills}</div></div>` : ''}
+        ${geoOverlap || clientOverlap ? `<div class="section-block flex-1">
+          ${geoOverlap ? `<div class="section-tag">Geography Overlap</div><div class="client-tags" style="margin:6px 0">${geoOverlap}</div>` : ''}
+          ${clientOverlap ? `<div class="section-tag">Client Overlap</div><div class="client-tags" style="margin-top:6px">${clientOverlap}</div>` : ''}
+        </div>` : ''}
+      </div>
+
+      ${assumptions ? `<div class="section-block"><div class="section-title" style="font-size:13px;margin-bottom:8px">Key Assumptions</div>${assumptions}</div>` : ''}
+
+      <div class="section-block">
+        <div class="kv-grid">
+          <div class="kv-item"><div class="kv-key">Integration Complexity</div><div class="kv-val">${esc(syn.integration_complexity||'N/A')}</div></div>
+          <div class="kv-item"><div class="kv-key">EV / Revenue Multiple</div><div class="kv-val">${esc(syn.suggested_ev_revenue_multiple||'N/A')}</div></div>
+          <div class="kv-item"><div class="kv-key">Deal Structure</div><div class="kv-val">${esc(syn.deal_structure||'N/A')}</div></div>
         </div>
+      </div>
+    </div>
 
-        <!-- Synergy Narrative -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-            <div class="pcard">
-                <h3 class="pcard-title">Revenue & Market Opportunities</h3>
-                <p class="body-text">${te.synergies.revenue_synergy.explanation}</p>
-                <ul class="bullet-list plus-list" style="margin-top:12px">
-                    ${te.synergies.revenue_synergy.opportunities.map(o => `<li>${o}</li>`).join('')}
-                </ul>
-            </div>
-            <div class="pcard">
-                <h3 class="pcard-title">Product & Platform Synergies</h3>
-                <p class="body-text">${te.synergies.product_synergy.explanation}</p>
-                <ul class="bullet-list arrow-list" style="margin-top:12px">
-                    ${te.synergies.product_synergy.opportunities.map(o => `<li>${o}</li>`).join('')}
-                </ul>
-            </div>
-        </div>
+    <!-- Profile sub-panel (re-uses profile renderers) -->
+    <div class="sub-panel" id="${subId}-profile">
+      <div class="section-block"><div class="section-tag">§1</div><div class="section-title">Business Overview</div><p class="section-prose">${esc((t.overview||{}).business_overview||'Not found in allowed sources.')}</p></div>
+      <div class="section-block"><div class="section-tag">§2</div><div class="section-title">Company Overview</div><div class="kv-grid">${renderKvGrid(t.overview||{})}</div></div>
+      <div class="section-block"><div class="section-tag">§3</div><div class="section-title">Services &amp; Products</div><div class="services-list">${renderServicesList(t.services||{})}</div></div>
+      <div class="section-block"><div class="section-tag">§5</div><div class="section-title">Clients &amp; Segments</div>${renderClientsInline(t.clients||{})}</div>
+      <div class="section-block"><div class="section-tag">§6</div><div class="section-title">Financials Summary</div>${renderFinSummary(t.financials||{})}</div>
+      <div class="section-block"><div class="section-tag">§11</div><div class="section-title">Strategic Intelligence</div>${renderStrategicInline(t.strategic||{})}</div>
+    </div>
 
-        <!-- Technology -->
-        <div class="pcard">
-            <h3 class="pcard-title">Technology & Platform Architecture</h3>
-            <p class="body-text"><strong>Stack Compatibility:</strong> ${te.technology.tech_stack_analysis}</p>
-            <p class="body-text" style="margin-top:10px"><strong>Engineering Talent:</strong> ${te.technology.talent_and_platform_compatibility}</p>
-            <ul class="bullet-list check-list" style="margin-top:12px">
-                ${te.technology.ip_and_patents.map(ip => `<li>${ip}</li>`).join('')}
-            </ul>
-        </div>
-
-        <!-- Financials -->
-        <div class="pcard">
-            <h3 class="pcard-title">Financial Assessment</h3>
-            <p class="body-text">${te.financial.financial_feasibility}</p>
-            <div class="fin-score-grid">
-                ${finScore('Affordability', te.financial.affordability_score)}
-                ${finScore('Financial Health', te.financial.financial_health_score)}
-                ${finScore('ROI Potential', te.financial.roi_potential_score)}
-                ${finScore('Value Creation', te.financial.value_creation_score)}
-            </div>
-        </div>
-
-        <!-- Risk -->
-        <div class="pcard">
-            <h3 class="pcard-title">Risk Assessment Matrix</h3>
-            <table class="risk-table">
-                <thead><tr><th>Dimension</th><th>Severity</th><th>Description</th></tr></thead>
-                <tbody>
-                    ${riskRow('Strategic Risk', te.risk.strategic_risks)}
-                    ${riskRow('Financial Risk', te.risk.financial_risks)}
-                    ${riskRow('Operational Risk', te.risk.operational_risks)}
-                    ${riskRow('Technology Risk', te.risk.technology_risks)}
-                    ${riskRow('Cultural Risk', te.risk.cultural_risks)}
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Devil's Advocate -->
-        <div class="da-box">
-            <div class="da-title">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Agent 8 · Devil's Advocate — Adversarial Thesis Challenge
-            </div>
-            <div class="da-qa">
-                ${daItem('Why should this deal NOT happen?', te.devils_advocate.why_deal_should_not_happen)}
-                ${daItem('What assumptions are weakest?', te.devils_advocate.weak_assumptions)}
-                ${daItem('What value destruction scenarios exist?', te.devils_advocate.value_destruction_scenarios)}
-                ${daItem('What could go wrong post-merger?', te.devils_advocate.post_merger_risks)}
-                ${daItem('Why might competitors benefit instead?', te.devils_advocate.competitor_benefits)}
-            </div>
-            <div class="case-grid">
-                <div class="case-box bull">
-                    <h5>🟢 Bull Case Scenario</h5>
-                    <p>${te.devils_advocate.bull_case}</p>
-                </div>
-                <div class="case-box bear">
-                    <h5>🔴 Bear Case Scenario</h5>
-                    <p>${te.devils_advocate.bear_case}</p>
-                </div>
-            </div>
-        </div>
-    `;
+  </div>`;
 }
 
-// ── Template Helpers ───────────────────────────────────────
-function bar(label, val, max, color = '') {
-    const pct = Math.round((Math.max(0, val) / max) * 100);
-    return `
-    <div class="bar-row">
-        <div class="bar-header"><span>${label}</span><span>${val}/${max}</span></div>
-        <div class="bar-track"><div class="bar-fill ${color}" style="width:${pct}%"></div></div>
-    </div>`;
+function switchSubTab(subId, panel, btn) {
+  const container = btn.closest('.target-panel');
+  container.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
+  container.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(`${subId}-${panel}`)?.classList.add('active');
 }
 
-function finScore(name, score) {
-    const cls = score >= 8 ? 'badge-green' : score >= 5 ? 'badge-amber' : 'badge-red';
-    return `<div class="fin-score-item"><div class="fin-score-name">${name}</div><span class="badge ${cls}">${score}/10</span></div>`;
+// ── Inline renderers for discovery target profile sub-panel ──────────────────
+function renderKvGrid(ov) {
+  return [
+    ['Legal Name', ov.legal_name], ['Type', ov.company_type], ['Founded', ov.year_founded],
+    ['HQ', ov.hq], ['Employees', ov.employee_count], ['Sector', ov.sector_industry],
+    ['Business Model', ov.business_model],
+  ].map(([k,v]) => `<div class="kv-item"><div class="kv-key">${esc(k)}</div><div class="kv-val">${esc(v||'Not found in allowed sources')}</div></div>`).join('');
 }
 
-function riskRow(label, dim) {
-    const cls = dim.level?.toLowerCase() === 'low' ? 'badge-green' : dim.level?.toLowerCase() === 'high' ? 'badge-red' : 'badge-amber';
-    return `<tr><td>${label}</td><td><span class="badge ${cls}">${dim.level}</span></td><td>${dim.description}</td></tr>`;
+function renderServicesList(sv) {
+  const items = sv.services_solutions_products || [];
+  return items.length
+    ? items.map(s => `<div class="service-item"><div class="service-name">${esc(s.name||'')}</div><div class="service-desc">${esc(s.description||'')}</div></div>`).join('')
+    : '<p class="section-prose">Not found in allowed sources.</p>';
 }
 
-function daItem(q, a) {
-    return `<div class="da-qa-item"><div class="da-q">${q}</div><div class="da-a">${a}</div></div>`;
+function renderClientsInline(cli) {
+  const clients = cli.named_clients || [];
+  const segs    = cli.client_segments || [];
+  return (clients.length ? `<div class="client-tags">${clients.map(c => `<span class="client-tag">${esc(c)}</span>`).join('')}</div>` : '<p class="section-prose">No named clients.</p>') +
+    (segs.length ? `<div class="segment-tags" style="margin-top:8px">${segs.map(s => `<span class="segment-tag">${esc(s)}</span>`).join('')}</div>` : '');
 }
 
-function addLi(parent, text) {
-    const li = document.createElement('li');
-    li.textContent = text;
-    parent.appendChild(li);
+function renderFinSummary(fin) {
+  const partners = (fin.key_partnerships||[]);
+  return `<div class="fin-summary">
+    <div class="fin-card"><div class="fin-card-label">Revenue</div><div class="fin-card-val">${esc(fin.revenue||'N/A')}</div></div>
+    <div class="fin-card"><div class="fin-card-label">Rev / Employee</div><div class="fin-card-val">${esc(fin.revenue_per_employee||'N/A')}</div></div>
+    <div class="fin-card"><div class="fin-card-label">Source</div><div class="fin-card-val" style="font-size:11px">${esc(fin.revenue_source||'N/A')}</div></div>
+  </div>
+  ${partners.length ? `<div class="subsection-title">Key Partnerships</div><div class="partner-chips">${partners.map(p=>`<span class="partner-chip">${esc(p)}</span>`).join('')}</div>` : ''}`;
 }
 
-function fillList(parent, arr) {
-    parent.innerHTML = '';
-    (arr || []).forEach(item => addLi(parent, item));
+function renderStrategicInline(st) {
+  const s = st.strategic_strengths || [];
+  const r = st.key_risks || [];
+  return `<div class="strategic-grid">
+    <div class="strategic-col"><div class="strategic-col-title">Strengths</div>${s.map(x=>`<div class="strategic-item strength">${esc(x)}</div>`).join('')}</div>
+    <div class="strategic-col"><div class="strategic-col-title">Risks</div>${r.map(x=>`<div class="strategic-item risk">${esc(x)}</div>`).join('')}</div>
+  </div>
+  <div class="prose-block" style="margin-top:10px"><div class="prose-block-title">M&amp;A Suitability</div><p>${esc(st.ma_suitability||'Not found in allowed sources.')}</p></div>`;
 }
 
-function fillGapList(parent, arr) {
-    parent.innerHTML = '';
-    (arr || []).forEach(item => addLi(parent, item));
-}
-
-function riskClass(score) {
-    if (score <= 3) return 'badge-green';
-    if (score <= 6) return 'badge-amber';
-    return 'badge-red';
-}
-
-function synergyClass(score) {
-    if (score >= 75) return 'badge-green';
-    if (score >= 50) return 'badge-amber';
-    return 'badge-red';
-}
-
-// ── Global Triggers ────────────────────────────────────────
-window.viewTarget = function(companyName) {
-    const idx = state.report.top_evaluations.findIndex(te => te.profile.name === companyName);
-    if (idx !== -1) {
-        state.targetIdx = idx;
-        switchTab('deepdive');
-        renderTargetList();
-        renderTargetDetail();
-    }
-};
-
-// ── Fetch Helper ───────────────────────────────────────────
-async function apiFetch(url, options = {}) {
-    const resp = await fetch(url, options);
-    if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.detail || `HTTP ${resp.status}`);
-    }
-    return resp.json();
+// ── Helper ─────────────────────────────────────────────────────────────────────
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }

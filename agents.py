@@ -1,128 +1,31 @@
 import json
+import re
 import requests
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
-# ─── Structured Output Schemas ──────────────────────────────────────────────
+from scraper import build_full_context
 
-class CapabilityGaps(BaseModel):
-    capability_gaps: List[str] = Field(description="Internal skills or capabilities the acquirer lacks")
-    market_gaps: List[str] = Field(description="Market segments or customer groups the acquirer cannot reach")
-    technology_gaps: List[str] = Field(description="Technology or software gaps")
-    customer_gaps: List[str] = Field(description="Gaps in the customer demographics or reach")
-    geographic_gaps: List[str] = Field(description="Geographic areas where the acquirer lacks presence")
+# ── Tone rules injected into every prompt ─────────────────────────────────────
+TONE = """
+MANDATORY TONE & SOURCE RULES:
+- Plain, precise, analytical English only. Zero marketing language.
+- Banned words (and equivalents): cutting-edge, best-in-class, innovative, transformative,
+  robust, seamlessly, empowers, game-changing, holistic, end-to-end, world-class,
+  next-generation, dynamic, leverage, synergy (except as a section header).
+- Extract facts ONLY from the provided scraped data context below.
+- If a fact is not present in the provided context, output exactly: "Not found in allowed sources"
+- Never invent figures, names, dates, or locations not present in the provided data.
+- Do not add explanatory caveats; populate fields or state not-found.
+"""
 
-class StrategyOutput(BaseModel):
-    business_model_summary: str = Field(description="Summary of the acquirer's current business model")
-    strategic_priorities: List[str] = Field(description="Top 3-5 strategic priorities for the acquirer")
-    acquisition_rationale: str = Field(description="Core thesis of why the company should acquire")
-    gaps: CapabilityGaps = Field(description="Identified gaps that acquisitions can fill")
-
-class IndustryOutput(BaseModel):
-    structure: str = Field(description="Brief overview of the industry structure (fragmented, consolidated, etc.)")
-    growth_trends: List[str] = Field(description="High-growth trends in the industry")
-    consolidation_trends: List[str] = Field(description="Consolidation activities and trends")
-    emerging_technologies: List[str] = Field(description="Disruptive or emerging technologies in the space")
-    regulatory_trends: List[str] = Field(description="Key regulatory shifts or risks")
-    attractive_categories: List[str] = Field(description="Acquisition categories/sub-industries that are attractive")
-    disruption_risks: List[str] = Field(description="Disruption risks that could impact the industry")
-
-class CandidateProfile(BaseModel):
-    name: str = Field(description="Company Name")
-    industry: str = Field(description="Primary industry focus")
-    headquarters: str = Field(description="Headquarters city and country")
-    revenue_estimate: str = Field(description="Estimated annual revenue (e.g. $50M - $100M)")
-    employee_estimate: int = Field(description="Estimated number of employees")
-    key_products: List[str] = Field(description="Key products or services offered")
-    core_capabilities: List[str] = Field(description="Core strategic capabilities of the target")
-    market_position: str = Field(description="Market position (e.g., niche player, regional leader)")
-    strategic_fit_score: int = Field(description="Initial Strategic Fit score from 1-10")
-
-class DiscoveryOutput(BaseModel):
-    candidates: List[CandidateProfile] = Field(description="List of at least 20 acquisition candidates")
-
-class SynergyDimension(BaseModel):
-    score: int = Field(description="Score from 1 to 10")
-    explanation: str = Field(description="Detailed evidence-based justification for this score")
-    opportunities: List[str] = Field(description="Specific cross-sell, up-sell, or enhancement opportunities")
-
-class StrategicSynergyOutput(BaseModel):
-    strategic_fit: int = Field(description="Strategic Fit score from 1 to 10")
-    revenue_synergy: SynergyDimension = Field(description="Revenue synergies evaluation")
-    product_synergy: SynergyDimension = Field(description="Product synergies evaluation")
-    market_synergy: SynergyDimension = Field(description="Market synergies evaluation")
-    customer_synergy: SynergyDimension = Field(description="Customer base overlap and expansion evaluation")
-    geographic_synergy: SynergyDimension = Field(description="Geographic reach expansion evaluation")
-
-class TechnologyOutput(BaseModel):
-    technology_synergy_score: int = Field(description="Technology Synergy Score from 1 to 10")
-    tech_stack_analysis: str = Field(description="Analysis of compatibility between tech stacks")
-    ip_and_patents: List[str] = Field(description="Key intellectual property, patents, or data assets identified")
-    talent_and_platform_compatibility: str = Field(description="Assessment of engineering talent and platform alignment")
-
-class FinancialMetric(BaseModel):
-    revenue: str = Field(description="Estimated revenue of target")
-    ebitda: str = Field(description="Estimated EBITDA of target")
-    valuation_estimate: str = Field(description="Estimated transaction value / valuation range")
-    growth_profile: str = Field(description="Historical or projected growth rate")
-
-class FinancialOutput(BaseModel):
-    target_financials: FinancialMetric = Field(description="Financial profile of the target")
-    affordability_score: int = Field(description="Affordability score from 1 to 10 (10 = highly affordable)")
-    financial_health_score: int = Field(description="Financial health score from 1 to 10 (10 = very strong)")
-    roi_potential_score: int = Field(description="ROI Potential score from 1 to 10 (10 = high ROI)")
-    value_creation_score: int = Field(description="Value Creation score from 1 to 10 (10 = high value creation)")
-    financial_feasibility: str = Field(description="Detailed financial evaluation summary")
-
-class RiskDimension(BaseModel):
-    level: str = Field(description="Risk level: Low, Medium, High")
-    description: str = Field(description="Specific description of the risk in this category")
-
-class RiskOutput(BaseModel):
-    risk_score: int = Field(description="Overall Risk Score from 1 to 10 (1 = Very Low, 10 = Very High)")
-    strategic_risks: RiskDimension = Field(description="Risks of poor fit, overlap, or cannibalization")
-    financial_risks: RiskDimension = Field(description="Risks of overvaluation, high integration costs, or debt burden")
-    operational_risks: RiskDimension = Field(description="Risks of supply chain or operational incompatibility")
-    technology_risks: RiskDimension = Field(description="Risks of obsolete tech or platform incompatibility")
-    cultural_risks: RiskDimension = Field(description="Risks of leadership mismatch and talent retention issues")
-
-class DevilsAdvocateOutput(BaseModel):
-    why_deal_should_not_happen: str = Field(description="Answer: Why should this deal NOT happen?")
-    weak_assumptions: str = Field(description="Answer: What assumptions are weak?")
-    value_destruction_scenarios: str = Field(description="Answer: What value destruction scenarios exist?")
-    post_merger_risks: str = Field(description="Answer: What could go wrong post-merger?")
-    competitor_benefits: str = Field(description="Answer: Why might competitors benefit instead?")
-    bear_case: str = Field(description="Comprehensive Bear Case summary")
-    bull_case: str = Field(description="Comprehensive Bull Case summary")
-    cultural_compatibility_score: int = Field(description="Cultural Compatibility Score from 1-10 based on analysis")
-
-class TierRecommendation(BaseModel):
-    company_name: str = Field(description="Name of the company")
-    tier: str = Field(description="Tier (Tier 1: Immediate Acquisition Candidate, Tier 2: Strong Strategic Fit, Tier 3: Opportunistic Target, Tier 4: Monitor Only, Tier 5: Avoid)")
-    rationalization: str = Field(description="Specific reason for this tier classification")
-
-class PartnerOutput(BaseModel):
-    critique: str = Field(description="Adversarial critique of other agents' findings and scores")
-    hidden_opportunities: List[str] = Field(description="Identified hidden opportunities and synergies")
-    hidden_risks: List[str] = Field(description="Identified hidden risks and integration challenges")
-    recommendations_table: List[TierRecommendation] = Field(description="Tiering categorizations for the top targets")
-    final_questions: Dict[str, str] = Field(description="Answers to the 5 core investment banking recommendation questions: "
-                                                       "1. Which company should be acquired first? "
-                                                       "2. Which acquisition generates maximum shareholder value? "
-                                                       "3. Which acquisition is most feasible? "
-                                                       "4. Which acquisition has the best risk-adjusted return? "
-                                                       "5. What is the ideal acquisition roadmap for the next 3-5 years?")
-    ideal_roadmap_milestones: List[str] = Field(description="3-5 year roadmap timeline items")
-
-
-# ─── Ollama LLM ──────────────────────────────────────────────────────────────
-
-OLLAMA_MODEL = "llama3.2:latest"
+# ── Ollama config ─────────────────────────────────────────────────────────────
+OLLAMA_MODEL    = "llama3.2:latest"
 OLLAMA_BASE_URL = "http://localhost:11434"
 
 
+# ── Schema inliner ────────────────────────────────────────────────────────────
 def _inline_schema(schema: dict, defs: dict) -> dict:
-    """Recursively resolve $ref references to inline the schema (remove $defs)."""
     if "$ref" in schema:
         ref_name = schema["$ref"].split("/")[-1]
         return _inline_schema(defs.get(ref_name, {}), defs)
@@ -139,215 +42,446 @@ def _inline_schema(schema: dict, defs: dict) -> dict:
     return result
 
 
-def call_llm(prompt: str, schema_class, temperature: float = 0.2, model: Optional[str] = None) -> Dict[str, Any]:
+def call_llm(prompt: str, schema_class, temperature: float = 0.1, model: Optional[str] = None) -> Dict[str, Any]:
     raw_schema = schema_class.model_json_schema()
     defs = raw_schema.get("$defs", {})
-    flat_schema = _inline_schema(raw_schema, defs)
-    # Remove unsupported keys that trip up Ollama
-    flat_schema.pop("title", None)
+    flat = _inline_schema(raw_schema, defs)
+    flat.pop("title", None)
 
     payload = {
-        "model": model or OLLAMA_MODEL,
+        "model":   model or OLLAMA_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "format": flat_schema,
-        "stream": False,
-        "options": {"temperature": temperature, "num_ctx": 8192},
+        "format":   flat,
+        "stream":   False,
+        "options":  {"temperature": temperature, "num_ctx": 4096},
     }
 
     try:
-        resp = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json=payload,
-            timeout=600,
-        )
+        resp = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=180)
         resp.raise_for_status()
     except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. "
-            "Make sure Ollama is running: `ollama serve`"
-        )
+        raise RuntimeError(f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Run: ollama serve")
     except requests.exceptions.HTTPError as e:
-        # Log the response body for easier debugging
         try:
             body = resp.json()
         except Exception:
             body = resp.text
         raise RuntimeError(f"Ollama API error ({resp.status_code}): {body}") from e
 
-    result = resp.json()
-    raw = result.get("message", {}).get("content", "")
-
+    raw = resp.json().get("message", {}).get("content", "")
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        import re
         cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
         return json.loads(cleaned)
 
 
-# ─── Agent Functions ─────────────────────────────────────────────────────────
-
-def run_corporate_strategy(model: Optional[str], acquirer: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 1: Corporate Strategy Analyst. Your objective is to determine why the acquiring company should pursue acquisitions.
-Acquiring Company: {acquirer}
-Context / Parameters: {json.dumps(inputs, indent=2)}
-
-Analyze:
-- Business model
-- Growth strategy
-- Industry position
-- Competitive advantages and weaknesses
-- Revenue mix and product portfolio
-- Customer segments and geographic presence
-- Current challenges and future growth opportunities
-
-Be rigorous and factual. Identify precise strategic gaps: capability gaps, market gaps, technology gaps, customer gaps, and geographic gaps."""
-
-    return call_llm(prompt, StrategyOutput, 0.2, model)
+def _build_context(scraped: Dict[str, Any], search_keys: Optional[List[str]] = None) -> str:
+    url = scraped.get("url", "")
+    prefix = f"OFFICIAL WEBSITE URL: {url}\n\n" if url else ""
+    return prefix + build_full_context(scraped, search_keys=search_keys)
 
 
-def run_industry_intelligence(model: Optional[str], acquirer: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 2: Industry Intelligence Analyst. Your objective is to map the industry landscape for potential acquisitions.
-Acquiring Company: {acquirer}
-Context / Parameters: {json.dumps(inputs, indent=2)}
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
 
-Analyze:
-- Industry structure (degree of fragmentation, consolidation trends)
-- Growth trends and emerging technologies
-- Regulatory trends and competitive threats
-
-Identify attractive acquisition categories, high-growth segments, and key disruption risks."""
-
-    return call_llm(prompt, IndustryOutput, 0.2, model)
-
-
-def run_target_discovery(model: Optional[str], acquirer: str, strategy: Dict[str, Any], industry: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 3: Acquisition Target Discovery Agent. Your objective is to generate acquisition candidates.
-Acquiring Company: {acquirer}
-Strategy Context: {json.dumps(strategy, indent=2)}
-Industry Context: {json.dumps(industry, indent=2)}
-Optional Parameters: {json.dumps(inputs, indent=2)}
-
-Search for companies that satisfy strategic, geographic, technology, product, customer, and financial feasibility criteria (budget: {inputs.get('acquisition_budget', 'Not Specified')}).
-
-Generate a longlist of at least 20 real or highly realistic companies. For each candidate provide:
-- Company Name, Industry, Headquarters, Revenue estimate, Employee estimate
-- Key products, Core capabilities, Market position
-- An initial Strategic Fit score (1-10)
-
-Ensure you return exactly 20 or more candidates."""
-
-    return call_llm(prompt, DiscoveryOutput, 0.3, model)
+class CompanyOverviewOutput(BaseModel):
+    business_overview: str = Field(description="3-4 sentences on scale, core focus, and market positioning extracted from provided data.")
+    legal_name: str
+    company_type: str = Field(description="Public, Private, PE-backed, VC-backed, Subsidiary, Joint Venture")
+    year_founded: str
+    hq: str = Field(description="City, State/Region, Country")
+    global_offices: str = Field(description="Format: AMER: USA (2) | EMEA: UK (1) | APAC: Singapore (1)")
+    employee_count: str = Field(description="Integer with source note, e.g. '4,200 (LinkedIn, Q1 2025)'")
+    sector_industry: str
+    business_model: str = Field(description="One sentence on revenue/delivery model")
+    certifications_awards: List[str]
+    website_url: str
+    linkedin_url: str
 
 
-def run_strategic_synergies(model: Optional[str], acquirer: str, target: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 4: Strategic Synergy Analyst. Your objective is to evaluate strategic synergies.
-Acquiring Company: {acquirer}
-Target Company Profile: {json.dumps(target, indent=2)}
-Acquirer Strategy Gaps: {json.dumps(strategy.get('gaps', {}), indent=2)}
+class ServiceItem(BaseModel):
+    name: str  = Field(description="Verbatim from website")
+    description: str = Field(description="Plain factual description")
 
-Evaluate in detail (Score 1-10 each):
-1. Strategic Fit: Overall strategic alignment
-2. Revenue Synergies: Cross-selling, upselling, customer and geographic expansion
-3. Product Synergies: Portfolio overlap, complementarity, technology enhancement
-4. Market Synergies: Market share, competitive strengthening
-5. Customer Synergies: Demographic fit, customer expansion
-6. Geographic Synergies: Market entry, geographic gap filling
-
-Never assume synergy exists. Look for evidence. Penalize overlapping products with weak differentiation."""
-
-    return call_llm(prompt, StrategicSynergyOutput, 0.2, model)
+class ServicesOutput(BaseModel):
+    services_solutions_products: List[ServiceItem]
 
 
-def run_technology_evaluation(model: Optional[str], acquirer: str, target: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 5: Technology & Innovation Analyst. Your objective is to evaluate technology compatibility.
-Acquiring Company: {acquirer}
-Target Company Profile: {json.dumps(target, indent=2)}
-Acquirer Tech Gaps: {strategy.get('gaps', {}).get('technology_gaps', [])}
-
-Analyze:
-- Technology stack compatibility, IP portfolio and patents
-- AI capabilities, data assets, engineering talent, platform compatibility
-
-Output a Technology Synergy Score (1-10) and detailed analysis."""
-
-    return call_llm(prompt, TechnologyOutput, 0.2, model)
+class LocationsOutput(BaseModel):
+    headquarters: str
+    amer_offices: List[str]
+    emea_offices: List[str]
+    apac_offices: List[str]
+    delivery_centers: List[str]
+    parent_company: str
 
 
-def run_financial_evaluation(model: Optional[str], acquirer: str, target: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 6: Financial Analyst. Your objective is to evaluate acquisition feasibility.
-Acquiring Company: {acquirer}
-Target Company Profile: {json.dumps(target, indent=2)}
-Acquisition Budget/Financial Inputs: {json.dumps(inputs, indent=2)}
-
-Analyze:
-- Target financial metrics (Revenue, EBITDA, Valuation Estimate, Growth Profile)
-- Affordability (1-10): Can the acquirer afford this?
-- Financial Health (1-10): Profitability vs. cash burn
-- ROI Potential (1-10): Expected returns on capital
-- Value Creation (1-10): Long-term shareholder value
-
-Penalize targets with poor profitability or that exceed the acquisition budget. Explicitly estimate valuation range using typical industry multiples."""
-
-    return call_llm(prompt, FinancialOutput, 0.2, model)
+class ClientsOutput(BaseModel):
+    named_clients: List[str] = Field(description="Up to 10 named clients, names only")
+    client_segments: List[str]
+    anonymous_case_studies: str
 
 
-def run_risk_assessment(model: Optional[str], acquirer: str, target: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 7: Risk Assessment Agent. Your objective is to identify acquisition risks.
-Acquiring Company: {acquirer}
-Target Company Profile: {json.dumps(target, indent=2)}
+class FundingRound(BaseModel):
+    date: str
+    round_type: str
+    amount: str
+    lead_investors: str
 
-Identify and score (Low, Medium, High) the following risks:
-1. Strategic Risks: Weak fit, market overlap, product cannibalization
-2. Financial Risks: Overvaluation, integration costs, debt burden
-3. Operational Risks: Process incompatibility, supply chain conflicts
-4. Technology Risks: Platform incompatibility, obsolete technology
-5. Cultural Risks: Leadership mismatch, talent retention issues
+class AcquisitionItem(BaseModel):
+    company_name: str
+    descriptor: str = Field(description="4-5 word descriptor")
+    year: str
+    deal_value: str
+    headcount_added: str
+    strategic_rationale: str = Field(description="Max 15 words, only if stated in sources")
 
-Provide an overall Risk Score from 1 to 10 (1 = Very Low Risk, 10 = Very High Risk)."""
-
-    return call_llm(prompt, RiskOutput, 0.2, model)
-
-
-def run_devils_advocate(model: Optional[str], acquirer: str, target: Dict[str, Any], strategy: Dict[str, Any], financial: Dict[str, Any], risk: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 8: Devil's Advocate Agent. Your objective is to challenge the acquisition thesis.
-Acquiring Company: {acquirer}
-Target: {json.dumps(target, indent=2)}
-Strategic Fit / Synergy Context: {json.dumps(strategy, indent=2)}
-Financial Assessment: {json.dumps(financial, indent=2)}
-Risk Assessment: {json.dumps(risk, indent=2)}
-
-For this target answer:
-1. Why should this deal NOT happen? (Challenge the core thesis)
-2. What assumptions are weak? (Question growth projections, cost savings, synergies)
-3. What value destruction scenarios exist?
-4. What could go wrong post-merger? (Integration friction)
-5. Why might competitors benefit instead?
-
-Generate an aggressive Bear Case, a balanced Bull Case, and assign a Cultural Compatibility Score (1-10)."""
-
-    return call_llm(prompt, DevilsAdvocateOutput, 0.3, model)
+class FinancialsOutput(BaseModel):
+    revenue: str = Field(description="Most recent annual revenue with currency, fiscal year, source")
+    revenue_source: str
+    revenue_per_employee: str = Field(description="USD [X]K")
+    funding_rounds: List[FundingRound]
+    acquisitions: List[AcquisitionItem]
+    key_partnerships: List[str]
 
 
-def run_ma_partner(model: Optional[str], acquirer: str, top_targets_evaluations: List[Dict[str, Any]], inputs: Dict[str, Any]) -> Dict[str, Any]:
-    prompt = f"""You are Agent 9: M&A Partner Agent. You act as a senior investment banker.
-Acquiring Company: {acquirer}
-Inputs: {json.dumps(inputs, indent=2)}
+class LeaderItem(BaseModel):
+    full_name: str
+    title: str
+    previous_role: str = Field(description="ex-[Role, Company]")
+    accenture_alumni: bool
 
-Detailed Evaluations of top candidates:
-{json.dumps(top_targets_evaluations, indent=2)}
+class LeadershipOutput(BaseModel):
+    leaders: List[LeaderItem]
 
-Tasks:
-1. Review and critique the outputs from all agents. Challenge their assumptions.
-2. Identify hidden opportunities and hidden risks/missing synergies.
-3. Classify all evaluated targets into Tier 1 (Immediate Acquisition Candidate) through Tier 5 (Avoid).
-4. Answer the 5 core M&A questions:
-   - Which company should be acquired first?
-   - Which acquisition generates maximum shareholder value?
-   - Which acquisition is most feasible?
-   - Which acquisition has the best risk-adjusted return?
-   - What is the ideal acquisition roadmap for the next 3-5 years?
 
-Provide an authoritative, high-value investment banking advisory recommendation."""
+class NewsItem(BaseModel):
+    month_year: str
+    description: str
 
-    return call_llm(prompt, PartnerOutput, 0.2, model)
+class GlassdoorNewsOutput(BaseModel):
+    glassdoor_rating: str
+    glassdoor_total_reviews: str
+    recent_news: List[NewsItem]
+
+
+class WorkforceFunction(BaseModel):
+    function_name: str
+    percentage: str
+
+class WorkforceLocation(BaseModel):
+    location: str
+    percentage: str
+
+class WorkforceOutput(BaseModel):
+    functions: List[WorkforceFunction]
+    locations: List[WorkforceLocation]
+    top_skills: List[str]
+    open_positions: str
+
+
+class StrategicOutput(BaseModel):
+    strategic_strengths: List[str] = Field(description="Exactly 3 items, max 6 words each")
+    key_risks: List[str] = Field(description="Exactly 3 items, max 6 words each")
+    strategic_fit_for_accenture: str = Field(description="3-5 sentences, specific capabilities/geographies/clients")
+    ma_suitability: str = Field(description="3-5 sentences on acquisition/partnership/vendor fit")
+
+
+# ── Synergy model ─────────────────────────────────────────────────────────────
+class SynergyItem(BaseModel):
+    synergy_type: str = Field(description="e.g. 'Revenue — cross-sell', 'Cost — headcount consolidation', 'Revenue — capability fill'")
+    basis: str = Field(description="Factual basis for estimate, max 20 words, from provided data only")
+    estimated_value_low_usd_m: float = Field(description="Lower bound USD millions. Use 0 if not calculable.")
+    estimated_value_high_usd_m: float = Field(description="Upper bound USD millions. Use 0 if not calculable.")
+    confidence_level: str = Field(description="High, Medium, or Low based on data availability")
+    year_realizable: int = Field(description="1, 2, or 3 — earliest year synergy is realizable post-close")
+
+class SynergyModelOutput(BaseModel):
+    total_low_usd_m: float
+    total_high_usd_m: float
+    synergy_items: List[SynergyItem]
+    client_overlap: List[str] = Field(description="Client names appearing in both acquirer and target data")
+    geography_overlap: List[str] = Field(description="Markets where both companies operate")
+    capability_gaps_filled: List[str] = Field(description="What the target adds to the acquirer")
+    key_assumptions: List[str] = Field(description="Max 5 assumptions, max 15 words each")
+    deal_structure: str = Field(description="Full acquisition | Strategic minority stake | Joint venture | Partnership agreement")
+    suggested_ev_revenue_multiple: str = Field(description="e.g. '1.5x–2.5x' based on sector comps from data")
+    integration_complexity: str = Field(description="Low | Medium | High with one-sentence basis")
+    headline_rationale: str = Field(description="One plain English sentence on why this deal makes sense")
+
+
+# ── Acquirer profile for discovery mode ──────────────────────────────────────
+class AcquirerProfile(BaseModel):
+    name: str
+    sector: str
+    services: List[str]
+    named_clients: List[str]
+    geographies: List[str]
+    capability_gaps: List[str] = Field(description="Areas where acquirer is weak or absent")
+    revenue_estimate: str
+    employee_count: str
+
+
+# ── Target name extractor (discovery mode) ───────────────────────────────────
+class DiscoveredTargets(BaseModel):
+    company_names: List[str] = Field(description="List of 3-6 real company names extracted from search snippets that are plausible acquisition targets")
+    rationale_per_target: List[str] = Field(description="One sentence per target explaining why it appeared in search results")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AGENT FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def agent_company_overview(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["general", "linkedin"])
+    prompt = f"""{TONE}
+You are Agent 1: Company Profile Analyst.
+Company: {company}
+
+GROUNDED DATA (use this as your only source):
+{ctx}
+
+Extract SECTION 1 (Business Overview, 3-4 sentences) and SECTION 2 (Company Overview fields)
+from the data above. Output "Not found in allowed sources" for any field not in the data."""
+    return call_llm(prompt, CompanyOverviewOutput, 0.1, model)
+
+
+def agent_services(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["general"])
+    prompt = f"""{TONE}
+You are Agent 2: Services & Products Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract all service, solution, and product names verbatim from the website data above.
+Use exact capitalization and wording from the source. Follow each with a factual description
+based only on the provided text."""
+    return call_llm(prompt, ServicesOutput, 0.1, model)
+
+
+def agent_locations(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["general"])
+    prompt = f"""{TONE}
+You are Agent 3: Locations & Footprint Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract all office locations, delivery centers, and parent company information
+from the data above only."""
+    return call_llm(prompt, LocationsOutput, 0.1, model)
+
+
+def agent_clients(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["clients", "general"])
+    prompt = f"""{TONE}
+You are Agent 4: Customer & Market Intelligence Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract named clients (up to 10), client segments, and case study references
+from the provided data only. If no clients are named in the data, state so."""
+    return call_llm(prompt, ClientsOutput, 0.1, model)
+
+
+def agent_financials(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["funding", "general"])
+    prompt = f"""{TONE}
+You are Agent 5: Financial & M&A Intelligence Analyst.
+Company: {company}
+
+GROUNDED DATA (includes yfinance public market data if available):
+{ctx}
+
+Extract revenue, funding rounds, acquisitions, and partnerships from the data above.
+For public companies, use the yfinance figures provided. For private companies, use
+search snippet estimates but note the source explicitly in the revenue field."""
+    return call_llm(prompt, FinancialsOutput, 0.1, model)
+
+
+def agent_leadership(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["leadership"])
+    prompt = f"""{TONE}
+You are Agent 6: Leadership Intelligence Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract leadership team from the provided data. Flag Accenture alumni.
+Only include names that appear in the provided data."""
+    return call_llm(prompt, LeadershipOutput, 0.1, model)
+
+
+def agent_glassdoor_news(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["glassdoor", "news"])
+    prompt = f"""{TONE}
+You are Agent 7: External Intelligence Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract Glassdoor rating/review count and recent news items from the data above.
+Only report news that appears in the provided search results with dates."""
+    return call_llm(prompt, GlassdoorNewsOutput, 0.1, model)
+
+
+def agent_workforce(model: Optional[str], company: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["linkedin", "general"])
+    prompt = f"""{TONE}
+You are Agent 8: Workforce Intelligence Analyst.
+Company: {company}
+
+GROUNDED DATA:
+{ctx}
+
+Extract workforce breakdown, skills, and open positions from the provided data.
+Use LinkedIn search result snippets for headcount data if available."""
+    return call_llm(prompt, WorkforceOutput, 0.1, model)
+
+
+def agent_strategic(
+    model: Optional[str],
+    company: str,
+    overview: Dict,
+    services: Dict,
+    clients: Dict,
+    financials: Dict,
+    leadership: Dict,
+    workforce: Dict,
+    scraped: Dict,
+) -> Dict:
+    from scraper import format_financials_context
+    fin = scraped.get("financials", {})
+    fin_ctx = format_financials_context(fin)
+    prompt = f"""{TONE}
+You are Agent 9: Accenture V&A Strategic Intelligence Analyst.
+Company: {company}
+
+VERIFIED DATA SUMMARY:
+- Business model: {overview.get('business_model', '')}
+- Sector: {overview.get('sector_industry', '')}
+- Revenue: {financials.get('revenue', '')} | Revenue/Employee: {financials.get('revenue_per_employee', '')}
+- Employees: {overview.get('employee_count', '')}
+- Key services: {[s.get('name','') for s in services.get('services_solutions_products', [])[:6]]}
+- Named clients: {clients.get('named_clients', [])}
+- Key partnerships: {financials.get('key_partnerships', [])}
+- Geographies: AMER: {overview.get('global_offices', '')}
+- Acquisitions (10yr): {[a.get('company_name','') for a in financials.get('acquisitions', [])]}
+
+MARKET DATA:
+{fin_ctx}
+
+Based ONLY on the verified data above, produce Section 11 Strategic Intelligence.
+Strategic Strengths: exactly 3, max 6 words each, no marketing language.
+Key Risks: exactly 3, max 6 words each, factual.
+Strategic Fit for Accenture: 3-5 sentences, specific.
+M&A Suitability: 3-5 sentences on acquisition/partner/vendor fit with deal structure view."""
+    return call_llm(prompt, StrategicOutput, 0.1, model)
+
+
+def agent_acquirer_profile(model: Optional[str], acquirer: str, scraped: Dict) -> Dict:
+    ctx = _build_context(scraped, ["general", "clients"])
+    prompt = f"""{TONE}
+You are a V&A analyst building an acquirer profile.
+Acquirer: {acquirer}
+
+GROUNDED DATA:
+{ctx}
+
+Extract the acquirer's sector, key services, named clients, operating geographies,
+and identify capability gaps (areas where they are weak or absent based on the data).
+Use "Not found in allowed sources" for any missing field."""
+    return call_llm(prompt, AcquirerProfile, 0.1, model)
+
+
+def agent_extract_targets(model: Optional[str], search_snippets: List[Dict], thesis: Dict) -> Dict:
+    snippets_text = "\n".join(
+        f"  [{i+1}] {s.get('title','')} — {s.get('body','')}"
+        for i, s in enumerate(search_snippets[:20])
+    )
+    prompt = f"""{TONE}
+You are a V&A analyst extracting acquisition target names from web search results.
+Investment thesis: sector={thesis.get('sector','')}, geography={thesis.get('geography','')},
+capability_gap={thesis.get('capability_gap','')}, revenue_range={thesis.get('revenue_range','')}
+
+SEARCH SNIPPETS (from DuckDuckGo):
+{snippets_text}
+
+Extract 3-6 real, distinct company names that appear in these snippets as plausible
+acquisition targets matching the thesis. Do not invent names not in the snippets.
+Exclude the acquirer itself and publicly-listed companies with market cap > $10B."""
+    return call_llm(prompt, DiscoveredTargets, 0.1, model)
+
+
+def agent_synergy_model(
+    model: Optional[str],
+    acquirer: str,
+    target: str,
+    acquirer_profile: Dict,
+    target_overview: Dict,
+    target_services: Dict,
+    target_clients: Dict,
+    target_financials: Dict,
+    target_locations: Dict,
+    target_financials_raw: Dict,
+) -> Dict:
+    from scraper import format_financials_context
+    # Build comparison context
+    fin_ctx = format_financials_context(target_financials_raw)
+
+    acq_clients  = acquirer_profile.get("named_clients", [])
+    tgt_clients  = target_clients.get("named_clients", [])
+    overlap      = list(set(c.lower() for c in acq_clients) & set(c.lower() for c in tgt_clients))
+
+    acq_geos = acquirer_profile.get("geographies", [])
+    tgt_geos = (target_locations.get("amer_offices", []) +
+                target_locations.get("emea_offices", []) +
+                target_locations.get("apac_offices", []))
+
+    prompt = f"""{TONE}
+You are a V&A Synergy Analyst quantifying M&A synergies.
+Acquirer: {acquirer}
+Target:   {target}
+
+ACQUIRER PROFILE:
+- Sector: {acquirer_profile.get('sector','')}
+- Key services: {acquirer_profile.get('services',[])}
+- Named clients: {acq_clients}
+- Geographies: {acq_geos}
+- Capability gaps: {acquirer_profile.get('capability_gaps',[])}
+- Revenue: {acquirer_profile.get('revenue_estimate','')}
+- Employees: {acquirer_profile.get('employee_count','')}
+
+TARGET PROFILE:
+- Sector: {target_overview.get('sector_industry','')}
+- Services: {[s.get('name','') for s in target_services.get('services_solutions_products',[])[:6]]}
+- Named clients: {tgt_clients}
+- Revenue: {target_financials.get('revenue','')}
+- Revenue/employee: {target_financials.get('revenue_per_employee','')}
+- Employees: {target_overview.get('employee_count','')}
+- Offices: {tgt_geos[:8]}
+- Partnerships: {target_financials.get('key_partnerships',[])}
+
+OVERLAP DETECTED:
+- Common clients: {overlap if overlap else 'None identified in data'}
+- Market data: {fin_ctx[:500]}
+
+TASK — Produce a quantified synergy model.
+Rules:
+- Base ALL estimates on the data above. Do not invent figures.
+- Where revenue data is available, size cross-sell as 2-5% of smaller entity's revenue per overlapping client segment.
+- Where headcount is available, size G&A consolidation as 8-15% of combined headcount × average cost/employee.
+- Use confidence=Low where data is insufficient, Medium where one data point exists, High where both entities' data supports the estimate.
+- If a synergy cannot be estimated from the data, set both low and high to 0 and confidence=Low.
+- suggested_ev_revenue_multiple must reference comparable sector transaction multiples if mentioned in search data.
+"""
+    return call_llm(prompt, SynergyModelOutput, 0.15, model)
