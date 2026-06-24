@@ -23,6 +23,11 @@ MANDATORY TONE & SOURCE RULES:
 OLLAMA_MODEL    = "llama3.2:latest"
 OLLAMA_BASE_URL = "http://localhost:11434"
 
+# Per-agent context budget in chars.  ~3000 chars ≈ 750 tokens; leaves ~3300
+# tokens in the 4096-token window for the instruction, schema, and output.
+CONTEXT_CHAR_LIMIT       = 3000
+CONTEXT_CHAR_LIMIT_RETRY = 1600   # halved budget used on timeout retry
+
 
 # ── Schema inliner ────────────────────────────────────────────────────────────
 def _inline_schema(schema: dict, defs: dict) -> dict:
@@ -42,44 +47,71 @@ def _inline_schema(schema: dict, defs: dict) -> dict:
     return result
 
 
+def _truncate_prompt(prompt: str, data_char_limit: int) -> str:
+    """
+    Find the GROUNDED DATA / VERIFIED DATA block and truncate it to
+    data_char_limit chars, leaving agent instructions intact.
+    """
+    for marker in ("GROUNDED DATA", "VERIFIED DATA", "ACQUIRER PROFILE"):
+        idx = prompt.find(marker)
+        if idx != -1:
+            header = prompt[:idx + len(marker)]
+            body   = prompt[idx + len(marker):]
+            return header + body[:data_char_limit] + "\n[...context truncated...]"
+    # Fallback: hard-truncate the whole prompt
+    return prompt[: data_char_limit + 800]
+
+
 def call_llm(prompt: str, schema_class, temperature: float = 0.1, model: Optional[str] = None) -> Dict[str, Any]:
     raw_schema = schema_class.model_json_schema()
     defs = raw_schema.get("$defs", {})
     flat = _inline_schema(raw_schema, defs)
     flat.pop("title", None)
 
-    payload = {
-        "model":   model or OLLAMA_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "format":   flat,
-        "stream":   False,
-        "options":  {"temperature": temperature, "num_ctx": 4096},
-    }
+    attempts = [prompt, _truncate_prompt(prompt, CONTEXT_CHAR_LIMIT_RETRY)]
+    last_exc: Exception = RuntimeError("Unknown error")
 
-    try:
-        resp = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=180)
-        resp.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Run: ollama serve")
-    except requests.exceptions.HTTPError as e:
+    for i, attempt_prompt in enumerate(attempts):
+        payload = {
+            "model":   model or OLLAMA_MODEL,
+            "messages": [{"role": "user", "content": attempt_prompt}],
+            "format":   flat,
+            "stream":   False,
+            "options":  {"temperature": temperature, "num_ctx": 4096},
+        }
         try:
-            body = resp.json()
-        except Exception:
-            body = resp.text
-        raise RuntimeError(f"Ollama API error ({resp.status_code}): {body}") from e
+            resp = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=300)
+            resp.raise_for_status()
+        except requests.exceptions.Timeout:
+            last_exc = RuntimeError("Ollama read timeout (300 s)")
+            if i == 0:
+                print(f"[agents] Timeout on full context; retrying with ~{CONTEXT_CHAR_LIMIT_RETRY} char batch...")
+            continue
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Run: ollama serve")
+        except requests.exceptions.HTTPError as e:
+            try:
+                body = resp.json()
+            except Exception:
+                body = resp.text
+            raise RuntimeError(f"Ollama API error ({resp.status_code}): {body}") from e
 
-    raw = resp.json().get("message", {}).get("content", "")
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
-        return json.loads(cleaned)
+        raw = resp.json().get("message", {}).get("content", "")
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
+            return json.loads(cleaned)
+
+    raise last_exc
 
 
 def _build_context(scraped: Dict[str, Any], search_keys: Optional[List[str]] = None) -> str:
     url = scraped.get("url", "")
     prefix = f"OFFICIAL WEBSITE URL: {url}\n\n" if url else ""
-    return prefix + build_full_context(scraped, search_keys=search_keys)
+    ctx = build_full_context(scraped, search_keys=search_keys)
+    # Hard cap: keeps total prompt well within the 4096-token window
+    return (prefix + ctx)[:CONTEXT_CHAR_LIMIT]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -433,55 +465,175 @@ def agent_synergy_model(
     target_financials: Dict,
     target_locations: Dict,
     target_financials_raw: Dict,
+    target_llm_research: Optional[Dict] = None,
+    target_deal_intel: Optional[Dict] = None,
+    acquirer_llm_research: Optional[Dict] = None,
+    llm_synergy: Optional[Dict] = None,
 ) -> Dict:
     from scraper import format_financials_context
-    # Build comparison context
     fin_ctx = format_financials_context(target_financials_raw)
 
-    acq_clients  = acquirer_profile.get("named_clients", [])
-    tgt_clients  = target_clients.get("named_clients", [])
-    overlap      = list(set(c.lower() for c in acq_clients) & set(c.lower() for c in tgt_clients))
+    acq_clients = acquirer_profile.get("named_clients", [])
+    tgt_clients = target_clients.get("named_clients", [])
+    overlap     = list(set(c.lower() for c in acq_clients) & set(c.lower() for c in tgt_clients))
+    acq_geos    = acquirer_profile.get("geographies", [])
+    tgt_geos    = (target_locations.get("amer_offices", []) +
+                   target_locations.get("emea_offices", []) +
+                   target_locations.get("apac_offices", []))
 
-    acq_geos = acquirer_profile.get("geographies", [])
-    tgt_geos = (target_locations.get("amer_offices", []) +
-                target_locations.get("emea_offices", []) +
-                target_locations.get("apac_offices", []))
+    # ── Pull structured fields from LLM research (DeepSeek / OpenAI) ─────────
+    tgt_lc  = (target_llm_research  or {}).get("collated", {})
+    acq_lc  = (acquirer_llm_research or {}).get("collated", {})
+    di_lc   = (target_deal_intel    or {}).get("collated", {})
+
+    # Revenue: prefer scraped extraction, fall back to LLM collated
+    def _best(scraped_val: str, lc_key: str, lc: Dict) -> str:
+        if scraped_val and "not found" not in scraped_val.lower():
+            return scraped_val
+        return str(lc.get(lc_key) or "") or "Not available"
+
+    tgt_revenue     = _best(target_financials.get("revenue", ""),        "revenue",      tgt_lc)
+    tgt_rev_emp     = _best(target_financials.get("revenue_per_employee",""), "revenue",  tgt_lc)
+    tgt_employees   = _best(target_overview.get("employee_count", ""),   "employees",    tgt_lc)
+    acq_revenue     = _best(acquirer_profile.get("revenue_estimate", ""),"revenue",      acq_lc)
+    acq_employees   = _best(acquirer_profile.get("employee_count", ""),  "employees",    acq_lc)
+
+    tgt_valuation   = tgt_lc.get("valuation_or_ev")   or ""
+    tgt_ebitda      = tgt_lc.get("ebitda_margin")      or ""
+    tgt_ownership   = tgt_lc.get("ownership")          or target_overview.get("company_type", "")
+    tgt_competitors = tgt_lc.get("competitors")        or []
+    tgt_growth      = tgt_lc.get("growth_signals")     or []
+    tgt_pe          = tgt_lc.get("pe_details")         or {}
+    tgt_certs       = tgt_lc.get("certifications")     or []
+    tgt_verticals   = tgt_lc.get("key_client_verticals") or []
+
+    # Build supplementary LLM context blocks
+    llm_ctx_lines = []
+    if (target_llm_research or {}).get("context_str"):
+        llm_ctx_lines.append(f"TARGET LLM RESEARCH:\n{target_llm_research['context_str'][:700]}")
+    if (target_deal_intel or {}).get("context_str"):
+        llm_ctx_lines.append(f"TARGET DEAL INTELLIGENCE:\n{target_deal_intel['context_str'][:600]}")
+    if (acquirer_llm_research or {}).get("context_str"):
+        llm_ctx_lines.append(f"ACQUIRER LLM RESEARCH:\n{acquirer_llm_research['context_str'][:400]}")
+    llm_supplement = "\n\n".join(llm_ctx_lines)
 
     prompt = f"""{TONE}
 You are a V&A Synergy Analyst quantifying M&A synergies.
 Acquirer: {acquirer}
 Target:   {target}
 
-ACQUIRER PROFILE:
+ACQUIRER PROFILE (verified data):
 - Sector: {acquirer_profile.get('sector','')}
 - Key services: {acquirer_profile.get('services',[])}
 - Named clients: {acq_clients}
 - Geographies: {acq_geos}
 - Capability gaps: {acquirer_profile.get('capability_gaps',[])}
-- Revenue: {acquirer_profile.get('revenue_estimate','')}
-- Employees: {acquirer_profile.get('employee_count','')}
+- Revenue: {acq_revenue}
+- Employees: {acq_employees}
 
-TARGET PROFILE:
+TARGET PROFILE (verified data):
 - Sector: {target_overview.get('sector_industry','')}
+- Company type / Ownership: {tgt_ownership}
 - Services: {[s.get('name','') for s in target_services.get('services_solutions_products',[])[:6]]}
 - Named clients: {tgt_clients}
-- Revenue: {target_financials.get('revenue','')}
-- Revenue/employee: {target_financials.get('revenue_per_employee','')}
-- Employees: {target_overview.get('employee_count','')}
+- Client verticals: {tgt_verticals}
+- Revenue: {tgt_revenue}
+- Revenue/Employee: {tgt_rev_emp}
+- EBITDA Margin: {tgt_ebitda if tgt_ebitda else 'Not available'}
+- EV / Valuation: {tgt_valuation if tgt_valuation else 'Not available'}
+- Employees: {tgt_employees}
 - Offices: {tgt_geos[:8]}
 - Partnerships: {target_financials.get('key_partnerships',[])}
+- Certifications: {tgt_certs}
+- Competitors: {tgt_competitors}
+- Growth signals: {tgt_growth}
+- PE details: {tgt_pe if tgt_pe else 'N/A'}
 
 OVERLAP DETECTED:
 - Common clients: {overlap if overlap else 'None identified in data'}
-- Market data: {fin_ctx[:500]}
+- Public market data: {fin_ctx[:400]}
 
-TASK — Produce a quantified synergy model.
-Rules:
-- Base ALL estimates on the data above. Do not invent figures.
-- Where revenue data is available, size cross-sell as 2-5% of smaller entity's revenue per overlapping client segment.
-- Where headcount is available, size G&A consolidation as 8-15% of combined headcount × average cost/employee.
-- Use confidence=Low where data is insufficient, Medium where one data point exists, High where both entities' data supports the estimate.
-- If a synergy cannot be estimated from the data, set both low and high to 0 and confidence=Low.
-- suggested_ev_revenue_multiple must reference comparable sector transaction multiples if mentioned in search data.
+{llm_supplement}
+
+TASK — Produce a rigorously quantified synergy model using ALL data above.
+
+ESTIMATION RULES (apply in order):
+1. If exact revenue is known, size revenue synergies as 3-5% of the smaller entity's annual revenue per overlapping client segment.
+2. If revenue is unknown but employee count is available, estimate revenue as employees × $120,000 (IT services benchmark) or employees × $80,000 (other sectors) — note this as an estimate.
+3. Size G&A cost synergies as 10-15% of estimated duplicate back-office headcount × $85,000 fully-loaded cost.
+4. Size technology/platform synergies (shared tools, reduced vendor costs) at $2M–$8M for sub-500-person targets, $5M–$20M for 500-2000 person targets.
+5. ALWAYS produce at least 2 synergy_items — one revenue and one cost — even with sparse data; use confidence=Low and explicit assumption notes.
+6. Use confidence=Low for benchmark estimates, Medium for single-source data, High when multiple sources agree.
+7. For suggested_ev_revenue_multiple, reference the target's sector: IT services 1.5x–3x, SaaS 4x–8x, Healthcare 2x–5x, Consulting 1x–2.5x, Other 1x–2x.
+8. deal_structure MUST be one of: "Full acquisition", "Strategic minority stake", "Joint venture", "Partnership agreement" — choose based on ownership type and strategic fit.
+9. integration_complexity: Low = same sector, same geo, similar culture; High = cross-sector, multi-region, PE exit; Medium otherwise. Always add a one-sentence reason.
+10. headline_rationale: ONE sentence combining acquirer's capability gap and target's key strength — never leave blank.
 """
-    return call_llm(prompt, SynergyModelOutput, 0.15, model)
+    result = call_llm(prompt, SynergyModelOutput, 0.15, model)
+
+    # ── Post-processing: prefer deal_intel values from DeepSeek when richer ──
+    tgt_sector = target_overview.get("sector_industry", "") or target_overview.get("sector", "")
+    caps = result.get("capability_gaps_filled") or []
+    cap_str = ", ".join(caps[:2]) if caps else "complementary capabilities"
+
+    # Prefer deal_intel EV multiple (computed by DeepSeek) over Ollama default
+    if di_lc.get("estimated_ev_revenue_multiple"):
+        if not result.get("suggested_ev_revenue_multiple") or result.get("suggested_ev_revenue_multiple") in ("", "N/M", "N/M — insufficient revenue data"):
+            result["suggested_ev_revenue_multiple"] = di_lc["estimated_ev_revenue_multiple"]
+
+    # Prefer deal_intel deal structure when more specific
+    if di_lc.get("deal_structure_recommendation") and not result.get("deal_structure"):
+        result["deal_structure"] = di_lc["deal_structure_recommendation"]
+
+    # Prefer deal_intel integration complexity (richer basis)
+    if di_lc.get("integration_complexity") and di_lc.get("integration_complexity_basis"):
+        if not result.get("integration_complexity") or "requires additional" in (result.get("integration_complexity") or ""):
+            result["integration_complexity"] = f"{di_lc['integration_complexity']} — {di_lc['integration_complexity_basis']}"
+
+    # Absolute fallbacks so UI never shows N/A
+    if not result.get("deal_structure"):
+        result["deal_structure"] = "Full acquisition"
+    if not result.get("integration_complexity"):
+        result["integration_complexity"] = "Medium — cross-sector deal requires detailed integration planning"
+    if not result.get("suggested_ev_revenue_multiple"):
+        # Use sector-based default
+        sector_low = tgt_sector.lower()
+        if "saas" in sector_low or "software" in sector_low:
+            result["suggested_ev_revenue_multiple"] = "4.0x–7.0x (SaaS sector benchmark)"
+        elif "health" in sector_low or "pharma" in sector_low or "bio" in sector_low:
+            result["suggested_ev_revenue_multiple"] = "2.5x–5.0x (Healthcare sector benchmark)"
+        elif "consult" in sector_low or "services" in sector_low or "technology" in sector_low:
+            result["suggested_ev_revenue_multiple"] = "1.5x–2.5x (IT services sector benchmark)"
+        else:
+            result["suggested_ev_revenue_multiple"] = "1.0x–2.5x (general services benchmark)"
+    if not result.get("headline_rationale"):
+        result["headline_rationale"] = (
+            f"Acquisition of {target} ({tgt_sector}) by {acquirer} fills the gap in {cap_str}, "
+            "with synergy sizing subject to financial diligence."
+        )
+
+    # ── Merge LLM synergy (DeepSeek) when Ollama produced zeros ─────────────
+    llm_syn_data = (llm_synergy or {}).get("collated", {})
+    if llm_syn_data:
+        # Override synergy items entirely when Ollama returned empty/zero
+        ollama_low = result.get("total_low_usd_m", 0) or 0
+        llm_low    = llm_syn_data.get("total_low_usd_m", 0) or 0
+        if (ollama_low == 0 or not result.get("synergy_items")) and llm_low > 0:
+            result["synergy_items"]   = llm_syn_data.get("synergy_items", [])
+            result["total_low_usd_m"] = llm_low
+            result["total_high_usd_m"]= llm_syn_data.get("total_high_usd_m", 0) or 0
+            result["key_assumptions"] = llm_syn_data.get("key_assumptions", [])
+
+        # Fill missing string fields from LLM synergy
+        for field in ("deal_structure", "integration_complexity", "suggested_ev_revenue_multiple",
+                      "headline_rationale", "capability_gaps_filled", "client_overlap", "geography_overlap"):
+            if not result.get(field) and llm_syn_data.get(field):
+                result[field] = llm_syn_data[field]
+
+    # If total synergy is still zero but synergy_items were produced, sum them
+    items = result.get("synergy_items") or []
+    if result.get("total_low_usd_m", 0) == 0 and items:
+        result["total_low_usd_m"]  = round(sum(i.get("estimated_value_low_usd_m",  0) for i in items), 1)
+        result["total_high_usd_m"] = round(sum(i.get("estimated_value_high_usd_m", 0) for i in items), 1)
+
+    return result

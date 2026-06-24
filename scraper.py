@@ -5,9 +5,11 @@ Provides grounded, real-world data so agents extract/analyse rather than recall.
 Sources (in priority order):
   1. Official website scrape (httpx + BeautifulSoup)
   2. Wikipedia REST API (free, no rate limit, excellent for known companies)
-  3. DuckDuckGo Instant Answer API (free, structured summary)
-  4. DDGS web/news search
-  5. yfinance for public-company financials
+  3. Wikidata entity API (free, structured key-value facts)
+  4. DuckDuckGo Instant Answer API (free, structured summary)
+  5. DDGS web/news search (general, funding, leadership, clients, technology, ownership, linkedin)
+  6. SEC EDGAR full-text search (US public companies only, free)
+  7. yfinance for public-company financials
 """
 
 import re
@@ -60,8 +62,8 @@ EXCLUDED_DOMAINS = {
 }
 
 SCRAPE_TIMEOUT = 15
-MAX_CHARS_PAGE = 2000   # stored raw; trimmed to budget at format time
-MAX_PAGES      = 3
+MAX_CHARS_PAGE = 2500   # stored raw; trimmed to budget at format time
+MAX_PAGES      = 4
 DDG_DELAY      = 2.0   # seconds between DDG requests
 
 
@@ -179,6 +181,162 @@ def get_ddg_instant(company_name: str) -> Dict[str, str]:
     return {}
 
 
+# ── Wikidata entity API (free, structured key-value facts) ────────────────────
+def get_wikidata_facts(company_name: str) -> Dict[str, Any]:
+    """
+    Query Wikidata for structured company facts via the free MediaWiki search + entity APIs.
+    Returns dict with keys like revenue, employees, founded, hq, ceo, ticker, etc.
+    """
+    result: Dict[str, Any] = {}
+    try:
+        # Step 1: find the Wikidata entity ID via the search API
+        search_url = (
+            "https://www.wikidata.org/w/api.php"
+            f"?action=wbsearchentities&search={quote_plus(company_name)}"
+            "&language=en&format=json&type=item&limit=3"
+        )
+        with httpx.Client(timeout=8, follow_redirects=True) as c:
+            r = c.get(search_url, headers={"Accept": "application/json"})
+            if r.status_code != 200:
+                return result
+            hits = r.json().get("search", [])
+            if not hits:
+                return result
+            # Pick the top hit that looks like a company (has description)
+            entity_id = hits[0]["id"]
+
+        # Step 2: fetch entity claims
+        entity_url = (
+            f"https://www.wikidata.org/wiki/Special:EntityData/{entity_id}.json"
+        )
+        with httpx.Client(timeout=10, follow_redirects=True) as c:
+            r = c.get(entity_url, headers={"Accept": "application/json"})
+            if r.status_code != 200:
+                return result
+            entities = r.json().get("entities", {})
+            entity = entities.get(entity_id, {})
+
+        claims = entity.get("claims", {})
+
+        def _time_val(pid: str) -> Optional[str]:
+            for s in claims.get(pid, []):
+                t = s.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+                if isinstance(t, dict) and t.get("time"):
+                    return t["time"][:8].lstrip("+").replace("-00", "")
+            return None
+
+        def _str_val(pid: str) -> Optional[str]:
+            for s in claims.get(pid, []):
+                v = s.get("mainsnak", {}).get("datavalue", {})
+                if v.get("type") == "string":
+                    return v.get("value")
+                if v.get("type") == "monolingualtext":
+                    return v.get("value", {}).get("text")
+            return None
+
+        def _qty_val(pid: str) -> Optional[str]:
+            for s in claims.get(pid, []):
+                v = s.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+                if isinstance(v, dict) and v.get("amount"):
+                    return v["amount"].lstrip("+")
+            return None
+
+        def _entity_label(pid: str) -> Optional[str]:
+            """Resolve an entity-valued claim to its English label via the API."""
+            for s in claims.get(pid, []):
+                v = s.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+                qid = v.get("id") if isinstance(v, dict) else None
+                if not qid:
+                    continue
+                try:
+                    lr = httpx.get(
+                        f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
+                        timeout=5, follow_redirects=True,
+                    )
+                    lbl = lr.json().get("entities", {}).get(qid, {}).get("labels", {}).get("en", {}).get("value")
+                    if lbl:
+                        return lbl
+                except Exception:
+                    pass
+            return None
+
+        founded   = _time_val("P571")
+        employees = _qty_val("P1082")
+        revenue   = _qty_val("P2139")
+        ticker    = _str_val("P249") or _str_val("P414")
+        isin      = _str_val("P946")
+        hq_label  = _entity_label("P159")
+        ceo_label = _entity_label("P169")
+        industry  = _entity_label("P452")
+        country   = _entity_label("P17")
+
+        if founded:   result["founded"]   = founded
+        if employees: result["employees"] = employees
+        if revenue:   result["revenue"]   = revenue
+        if ticker:    result["ticker"]    = ticker
+        if isin:      result["isin"]      = isin
+        if hq_label:  result["hq"]        = hq_label
+        if ceo_label: result["ceo"]       = ceo_label
+        if industry:  result["industry"]  = industry
+        if country:   result["country"]   = country
+
+    except Exception as e:
+        print(f"[scraper] Wikidata failed (non-critical): {e}")
+
+    return result
+
+
+# ── SEC EDGAR company search (US public companies, free) ─────────────────────
+def get_sec_edgar_data(company_name: str) -> Dict[str, Any]:
+    """
+    Search SEC EDGAR for US-listed companies. Returns basic CIK, SIC, description
+    and a link to the most recent 10-K/10-Q if available.
+    """
+    result: Dict[str, Any] = {}
+    try:
+        search_url = (
+            "https://efts.sec.gov/LATEST/search-index?q="
+            f"{quote_plus(company_name)}&dateRange=custom&startdt=2022-01-01"
+            "&forms=10-K&hits.hits._source=period_of_report,display_names,file_date"
+            "&hits.hits.total=1"
+        )
+        with httpx.Client(timeout=8, follow_redirects=True,
+                          headers={"User-Agent": "research-agent contact@example.com"}) as c:
+            r = c.get(search_url)
+            if r.status_code == 200:
+                data = r.json()
+                hits = data.get("hits", {}).get("hits", [])
+                if hits:
+                    src = hits[0].get("_source", {})
+                    result["sec_filing_date"]    = src.get("file_date", "")
+                    result["sec_period"]         = src.get("period_of_report", "")
+                    result["sec_display_names"]  = src.get("display_names", "")
+
+        # Also query the company search endpoint for CIK / SIC
+        company_url = (
+            "https://efts.sec.gov/LATEST/search-index?q="
+            f"{quote_plus(company_name)}&forms=10-K&hits.hits.total=1"
+        )
+        with httpx.Client(timeout=8, follow_redirects=True,
+                          headers={"User-Agent": "research-agent contact@example.com"}) as c:
+            r = c.get(
+                f"https://www.sec.gov/cgi-bin/browse-edgar"
+                f"?company={quote_plus(company_name)}&CIK=&type=10-K"
+                f"&dateb=&owner=include&count=5&search_text=&action=getcompany",
+            )
+            if r.status_code == 200 and "10-K" in r.text:
+                # Extract SIC description from HTML (rough parse)
+                m = re.search(r"SIC\s*[:\-]?\s*(\d{4})\s*[–\-]?\s*([A-Za-z &,]+)", r.text)
+                if m:
+                    result["sec_sic_code"] = m.group(1)
+                    result["sec_sic_desc"] = m.group(2).strip()
+
+    except Exception as e:
+        print(f"[scraper] SEC EDGAR failed (non-critical): {e}")
+
+    return result
+
+
 # ── Page scraper ──────────────────────────────────────────────────────────────
 def scrape_page(url: str) -> Optional[str]:
     for _ in range(2):
@@ -248,10 +406,13 @@ def scrape_website(company_name: str, base_url: Optional[str] = None) -> Dict[st
 def search_facts(company_name: str) -> Dict[str, List[Dict]]:
     queries = {
         "general":    f"{company_name} company founded headquarters employees revenue sector industry",
-        "funding":    f"{company_name} funding round acquisition investment valuation",
+        "funding":    f"{company_name} funding round acquisition investment valuation PE private equity",
         "leadership": f"{company_name} CEO CFO CTO chief executive president leadership team",
-        "clients":    f"{company_name} clients customers case study partnerships",
-        "glassdoor":  f"{company_name} Glassdoor rating employee reviews",
+        "clients":    f"{company_name} clients customers case study partnerships Fortune 500",
+        "glassdoor":  f"{company_name} Glassdoor rating employee reviews culture",
+        "technology": f"{company_name} technology stack platform certifications Microsoft SAP AWS cloud",
+        "ownership":  f"{company_name} ownership private equity investor parent company stake acquisition",
+        "linkedin":   f"site:linkedin.com/company {company_name} employees skills specialties",
     }
 
     facts: Dict[str, List[Dict]] = {}
@@ -264,8 +425,10 @@ def search_facts(company_name: str) -> Dict[str, List[Dict]]:
             ]
         time.sleep(DDG_DELAY)
 
-    # News — best-effort
-    news = _ddg_news(company_name, max_results=6)
+    # News — best-effort, more results
+    news = _ddg_news(f"{company_name} merger acquisition deal partnership", max_results=8)
+    if not news:
+        news = _ddg_news(company_name, max_results=8)
     if news:
         facts["news"] = [
             {
@@ -344,12 +507,16 @@ def gather_company_intelligence(
     url: Optional[str] = None,
     openai_key: Optional[str] = None,
     gemini_key: Optional[str] = None,
+    grok_key: Optional[str] = None,
+    nvidia_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     # Keys fall back to config.py if not passed explicitly
     try:
         import config as _cfg
         openai_key = openai_key or _cfg.OPENAI_API_KEY
         gemini_key = gemini_key or _cfg.GOOGLE_API_KEY
+        grok_key   = grok_key   or _cfg.XAI_API_KEY
+        nvidia_key = nvidia_key or getattr(_cfg, "NVIDIA_API_KEY", "")
     except ImportError:
         pass
     """
@@ -364,45 +531,62 @@ def gather_company_intelligence(
         "url":          url,
         "website":      {},
         "wiki":         {},
+        "wikidata":     {},
         "ddg_instant":  {},
         "search":       {},
+        "sec":          {},
         "financials":   {},
         "llm_research": {},
+        "deal_intel":   {},
     }
 
-    print("[scraper]   1/6 Wikipedia summary...")
+    print("[scraper]   1/8 Wikipedia summary...")
     data["wiki"] = get_wikipedia_summary(company_name)
 
-    print("[scraper]   2/6 DuckDuckGo instant answer...")
+    print("[scraper]   2/8 Wikidata structured facts...")
+    data["wikidata"] = get_wikidata_facts(company_name)
+
+    print("[scraper]   3/8 DuckDuckGo instant answer...")
     data["ddg_instant"] = get_ddg_instant(company_name)
 
-    print("[scraper]   3/6 Scraping website...")
+    print("[scraper]   4/8 Scraping website...")
     data["website"] = scrape_website(company_name, url)
     if data["website"] and not url:
         data["url"] = find_official_url(company_name)
 
-    print("[scraper]   4/6 Searching web for facts...")
+    print("[scraper]   5/8 Searching web for facts (8 query buckets)...")
     data["search"] = search_facts(company_name)
 
-    print("[scraper]   5/6 Fetching public financials...")
+    print("[scraper]   6/8 SEC EDGAR (US public companies)...")
+    data["sec"] = get_sec_edgar_data(company_name)
+
+    print("[scraper]   7/8 Fetching public financials (yfinance)...")
     data["financials"] = get_public_financials(company_name)
 
-    # LLM research (OpenAI + Gemini) — runs if API keys are available
-    oai = openai_key or os.environ.get("OPENAI_API_KEY", "")
-    gem = gemini_key or os.environ.get("GOOGLE_API_KEY", "")
-    if oai or gem:
-        print("[scraper]   6/6 LLM research (OpenAI + Gemini)...")
-        from llm_research import research_company
-        data["llm_research"] = research_company(company_name, openai_key=oai, gemini_key=gem)
+    # LLM research — runs if any key available; company facts + deal intel
+    oai  = openai_key  or os.environ.get("OPENAI_API_KEY", "")
+    gem  = gemini_key  or os.environ.get("GOOGLE_API_KEY", "")
+    grk  = (grok_key   or "") if grok_key   is not None else os.environ.get("XAI_API_KEY", "")
+    nv   = (nvidia_key or "") if nvidia_key  is not None else os.environ.get("NVIDIA_API_KEY", "")
+    if oai or gem or grk or nv:
+        active = [n for n, k in [("OpenAI", oai), ("Grok", grk), ("DeepSeek", nv), ("Gemini", gem)] if k]
+        print(f"[scraper]   8/9 LLM company research ({' + '.join(active)})...")
+        from llm_research import research_company, research_deal_intel
+        data["llm_research"] = research_company(company_name, openai_key=oai, gemini_key=gem, grok_key=grk, nvidia_key=nv)
+        print(f"[scraper]   9/9 LLM deal intelligence ({' + '.join(active)})...")
+        data["deal_intel"] = research_deal_intel(company_name, openai_key=oai, gemini_key=gem, grok_key=grk, nvidia_key=nv)
     else:
-        print("[scraper]   6/6 LLM research skipped (no API keys set)")
+        print("[scraper]   8/8 LLM research skipped (no API keys set)")
 
     page_count    = len(data["website"])
     search_count  = sum(len(v) for v in data["search"].values())
     wiki_ok       = bool(data["wiki"].get("extract"))
+    wikidata_ok   = bool(data["wikidata"])
+    sec_ok        = bool(data["sec"])
     fin_ok        = bool(data["financials"])
     llm_sources   = data["llm_research"].get("sources_used", [])
-    print(f"[scraper]   Done: {page_count} pages, {search_count} DDG, wiki={'yes' if wiki_ok else 'no'}, fin={'yes' if fin_ok else 'no'}, llm={llm_sources or 'none'}")
+    deal_ok       = bool(data["deal_intel"].get("context_str"))
+    print(f"[scraper]   Done: {page_count} pages, {search_count} DDG, wiki={'yes' if wiki_ok else 'no'}, wikidata={'yes' if wikidata_ok else 'no'}, sec={'yes' if sec_ok else 'no'}, fin={'yes' if fin_ok else 'no'}, llm={llm_sources or 'none'}, deal_intel={'yes' if deal_ok else 'no'}")
 
     return data
 
@@ -444,10 +628,12 @@ def discover_acquisition_targets(thesis: Dict[str, str]) -> List[Dict[str, str]]
 # The agent prompt text itself takes ~500 chars, schema ~200 chars.
 # Remaining ~3300 chars for data context.
 WIKI_BUDGET     = 800
+WIKIDATA_BUDGET = 400
 INSTANT_BUDGET  = 400
-WEBSITE_BUDGET  = 1200  # 2 pages × 600 each
-SEARCH_BUDGET   = 1200  # 2 keys × 600 each (2 snippets × 300)
+WEBSITE_BUDGET  = 1400  # up to 4 pages × 350 each
+SEARCH_BUDGET   = 1600  # more buckets now — 4 keys × 400 each
 FIN_BUDGET      = 500
+SEC_BUDGET      = 300
 
 
 def format_wiki_context(wiki: Dict[str, str]) -> str:
@@ -456,6 +642,39 @@ def format_wiki_context(wiki: Dict[str, str]) -> str:
     desc = wiki.get("description", "")
     extract = wiki["extract"][:WIKI_BUDGET]
     return f"[WIKIPEDIA] {wiki.get('title','')} — {desc}\n{extract}"
+
+
+def format_wikidata_context(wikidata: Dict[str, Any]) -> str:
+    if not wikidata:
+        return ""
+    parts = []
+    field_map = [
+        ("founded", "Founded"), ("employees", "Employees"), ("revenue", "Revenue"),
+        ("ticker", "Ticker"), ("isin", "ISIN"), ("hq", "HQ"),
+        ("ceo", "CEO"), ("industry", "Industry"), ("country", "Country"),
+    ]
+    for k, label in field_map:
+        v = wikidata.get(k)
+        if v:
+            parts.append(f"{label}: {v}")
+    if not parts:
+        return ""
+    return "[WIKIDATA] " + " | ".join(parts)
+
+
+def format_sec_context(sec: Dict[str, Any]) -> str:
+    if not sec:
+        return ""
+    parts = []
+    if sec.get("sec_sic_desc"):
+        parts.append(f"SIC: {sec.get('sec_sic_code','')} — {sec['sec_sic_desc']}")
+    if sec.get("sec_filing_date"):
+        parts.append(f"10-K filed: {sec['sec_filing_date']} (period: {sec.get('sec_period','')})")
+    if sec.get("sec_display_names"):
+        parts.append(f"Registered as: {sec['sec_display_names']}")
+    if not parts:
+        return ""
+    return "[SEC EDGAR] " + " | ".join(parts)
 
 
 def format_ddg_instant_context(instant: Dict[str, str]) -> str:
@@ -526,7 +745,7 @@ def format_financials_context(fin: Dict[str, Any]) -> str:
 def build_full_context(scraped: Dict[str, Any], search_keys: Optional[List[str]] = None) -> str:
     """
     Build a concise, budget-capped context string from all sources.
-    LLM research (OpenAI + Gemini) is placed FIRST as the highest-quality source.
+    LLM research is placed FIRST as the highest-quality enrichment.
     """
     parts = []
 
@@ -534,29 +753,46 @@ def build_full_context(scraped: Dict[str, Any], search_keys: Optional[List[str]]
     llm_research = scraped.get("llm_research", {})
     llm_ctx = llm_research.get("context_str", "")
     if llm_ctx:
-        parts.append(llm_ctx[:1200])
+        parts.append(llm_ctx[:2500])
+
+    # 1b. Deal intel — M&A-specific LLM research (ownership, comps, deal structure)
+    deal_intel = scraped.get("deal_intel", {})
+    deal_ctx = deal_intel.get("context_str", "")
+    if deal_ctx:
+        parts.append(deal_ctx[:1000])
 
     # 2. Wikipedia — reliable structured summary
     wiki_ctx = format_wiki_context(scraped.get("wiki", {}))
     if wiki_ctx:
         parts.append(wiki_ctx)
 
-    # 3. DuckDuckGo Instant Answer
+    # 3. Wikidata — structured key-value facts
+    wikidata_ctx = format_wikidata_context(scraped.get("wikidata", {}))
+    if wikidata_ctx:
+        parts.append(wikidata_ctx)
+
+    # 4. DuckDuckGo Instant Answer
     instant_ctx = format_ddg_instant_context(scraped.get("ddg_instant", {}))
     if instant_ctx:
         parts.append(instant_ctx)
 
-    # 4. Website pages
-    website_ctx = format_website_context(scraped.get("website", {}))
+    # 5. Website pages
+    website_ctx = format_website_context(scraped.get("website", {}), max_pages=MAX_PAGES)
     if website_ctx:
         parts.append(website_ctx)
 
-    # 5. DDG search snippets (agent-specific keys)
-    search_ctx = format_search_context(scraped.get("search", {}), keys=search_keys)
+    # 6. DDG search snippets (agent-specific keys + always include ownership/technology)
+    all_keys = list(dict.fromkeys((search_keys or []) + ["ownership", "technology", "linkedin"]))
+    search_ctx = format_search_context(scraped.get("search", {}), keys=all_keys)
     if search_ctx:
         parts.append(search_ctx)
 
-    # 6. yfinance public financials
+    # 7. SEC EDGAR registration data
+    sec_ctx = format_sec_context(scraped.get("sec", {}))
+    if sec_ctx:
+        parts.append(sec_ctx)
+
+    # 8. yfinance public financials
     fin_ctx = format_financials_context(scraped.get("financials", {}))
     if fin_ctx:
         parts.append(fin_ctx)

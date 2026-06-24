@@ -17,6 +17,24 @@ from scraper import gather_company_intelligence, discover_acquisition_targets
 
 tasks: Dict[str, Any] = {}
 
+# Strings that must NOT appear in a target company name
+_INVALID_TARGET_TOKENS = frozenset({
+    "not found", "allowed sources", "unknown", "n/a", "none", "null",
+    "not available", "not disclosed", "tbd", "company name", "example",
+})
+
+def _is_valid_target(name: str) -> bool:
+    low = name.lower().strip()
+    if len(low) <= 2:
+        return False
+    if re.match(r"^\d", low):
+        return False
+    if low.startswith("company"):
+        return False
+    if any(tok in low for tok in _INVALID_TARGET_TOKENS):
+        return False
+    return True
+
 # ── Simulate data ─────────────────────────────────────────────────────────────
 SIMULATE_PROFILE = {
     "company": "Avanade Inc.",
@@ -191,15 +209,23 @@ def _profile_company(task_id: str, company: str, model: str, scraped: Dict, base
 def _get_keys():
     try:
         import config as _cfg
-        return _cfg.OPENAI_API_KEY, _cfg.GOOGLE_API_KEY
+        return (
+            _cfg.OPENAI_API_KEY,
+            _cfg.GOOGLE_API_KEY,
+            getattr(_cfg, "XAI_API_KEY", ""),
+            getattr(_cfg, "NVIDIA_API_KEY", ""),
+        )
     except ImportError:
-        return "", ""
+        return "", "", "", ""
 
 
 def run_intelligence_pipeline(task_id: str, company: str, model: Optional[str], simulate: bool,
-                               openai_key: str = "", gemini_key: str = ""):
-    openai_key = openai_key or _get_keys()[0]
-    gemini_key = gemini_key or _get_keys()[1]
+                               openai_key: str = "", gemini_key: str = "", grok_key: str = "", nvidia_key: str = ""):
+    keys = _get_keys()
+    openai_key = openai_key or keys[0]
+    gemini_key = gemini_key or keys[1]
+    grok_key   = grok_key   or keys[2]
+    nvidia_key = nvidia_key or keys[3]
     tasks[task_id]["status"] = "running"
     m = model or OLLAMA_MODEL
 
@@ -223,10 +249,10 @@ def run_intelligence_pipeline(task_id: str, company: str, model: Optional[str], 
             return
 
         # ── Phase 0: Scrape real data ─────────────────────────────────────────
-        llm_sources = [s for s, k in [("OpenAI", openai_key), ("Gemini", gemini_key)] if k]
+        llm_sources = [s for s, k in [("OpenAI", openai_key), ("Grok", grok_key), ("DeepSeek", nvidia_key), ("Gemini", gemini_key)] if k]
         src_note = f" + {'/'.join(llm_sources)}" if llm_sources else ""
         _log(task_id, f"Phase 0: Gathering data for {company}{src_note}...", 5, "Data Acquisition")
-        scraped = gather_company_intelligence(company, openai_key=openai_key, gemini_key=gemini_key)
+        scraped = gather_company_intelligence(company, openai_key=openai_key, gemini_key=gemini_key, grok_key=grok_key, nvidia_key=nvidia_key)
         page_count = len(scraped.get("website", {}))
         llm_used   = scraped.get("llm_research", {}).get("sources_used", [])
         fin_flag   = "public financials" if scraped.get("financials") else "private"
@@ -237,10 +263,13 @@ def run_intelligence_pipeline(task_id: str, company: str, model: Optional[str], 
 
         # Attach scraped metadata for UI source chips
         results["_scraped_meta"] = {
-            "website_pages": len(scraped.get("website", {})),
-            "wiki_ok":       bool(scraped.get("wiki", {}).get("extract")),
-            "search_count":  sum(len(v) for v in scraped.get("search", {}).values()),
-            "fin_ok":        bool(scraped.get("financials")),
+            "website_pages":  len(scraped.get("website", {})),
+            "wiki_ok":        bool(scraped.get("wiki", {}).get("extract")),
+            "wikidata_ok":    bool(scraped.get("wikidata")),
+            "sec_ok":         bool(scraped.get("sec")),
+            "search_count":   sum(len(v) for v in scraped.get("search", {}).values()),
+            "fin_ok":         bool(scraped.get("financials")),
+            "deal_intel_ok":  bool(scraped.get("deal_intel", {}).get("context_str")),
         }
         results["_llm_sources"] = scraped.get("llm_research", {}).get("sources_used", [])
         tasks[task_id]["results"] = results
@@ -255,9 +284,12 @@ def run_intelligence_pipeline(task_id: str, company: str, model: Optional[str], 
 
 # ── Discovery pipeline ────────────────────────────────────────────────────────
 def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Optional[str], simulate: bool,
-                            openai_key: str = "", gemini_key: str = ""):
-    openai_key = openai_key or _get_keys()[0]
-    gemini_key = gemini_key or _get_keys()[1]
+                            openai_key: str = "", gemini_key: str = "", grok_key: str = "", nvidia_key: str = ""):
+    keys = _get_keys()
+    openai_key = openai_key or keys[0]
+    gemini_key = gemini_key or keys[1]
+    grok_key   = grok_key   or keys[2]
+    nvidia_key = nvidia_key or keys[3]
     tasks[task_id]["status"] = "running"
     m = model or OLLAMA_MODEL
 
@@ -281,11 +313,21 @@ def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Opt
 
         # ── Step 0: Scrape and profile acquirer ───────────────────────────────
         _log(task_id, f"Step 0: Gathering acquirer data: {acquirer}", 5, "Acquirer · Data Acquisition")
-        acq_scraped = gather_company_intelligence(acquirer, openai_key=openai_key, gemini_key=gemini_key)
+        acq_scraped = gather_company_intelligence(acquirer, openai_key=openai_key, gemini_key=gemini_key, grok_key=grok_key, nvidia_key=nvidia_key)
         llm_used = acq_scraped.get("llm_research", {}).get("sources_used", [])
         _log(task_id, f"Acquirer data acquired: {len(acq_scraped.get('website',{}))} pages, LLM={llm_used or 'none'}", 12, "Acquirer · Profiling")
         acq_profile = agent_acquirer_profile(m, acquirer, acq_scraped)
         _log(task_id, "Acquirer profile complete", 18, "Acquirer · Profiling")
+
+        # ── Auto-fill empty thesis from acquirer profile ──────────────────────
+        thesis = dict(thesis)  # avoid mutating caller's dict
+        if not any(thesis.get(k) for k in ("sector", "geography", "capability_gap")):
+            thesis["sector"]         = acq_profile.get("sector") or "technology services"
+            thesis["geography"]      = (", ".join(acq_profile.get("geographies", [])[:2])) or "Global"
+            thesis["capability_gap"] = (", ".join(acq_profile.get("capability_gaps", [])[:2])) or "digital transformation"
+            _log(task_id,
+                 f"Thesis auto-filled from acquirer profile — sector={thesis['sector']}, geo={thesis['geography']}, cap={thesis['capability_gap']}",
+                 19, "Target Discovery")
 
         # ── Step 1: Discover targets ──────────────────────────────────────────
         _log(task_id, "Step 1: Searching for acquisition targets...", 20, "Target Discovery")
@@ -293,16 +335,15 @@ def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Opt
         target_names: List[str] = []
         rationales: List[str] = []
 
-        # A: LLM-based discovery (OpenAI + Gemini) — if keys available
-        if openai_key or gemini_key:
+        # A: LLM-based discovery (OpenAI / Grok / Gemini) — if any key available
+        if openai_key or gemini_key or grok_key or nvidia_key:
             from llm_research import research_discovery_targets
-            _log(task_id, "Querying OpenAI + Gemini for target suggestions...", 21, "Target Discovery")
-            llm_disc = research_discovery_targets(acquirer, thesis, openai_key=openai_key, gemini_key=gemini_key)
-            llm_names = llm_disc.get("target_names", [])
-            llm_names = [n for n in llm_names if n and len(n.strip()) > 2][:5]
+            active = [n for n, k in [("OpenAI", openai_key), ("Grok", grok_key), ("DeepSeek", nvidia_key), ("Gemini", gemini_key)] if k]
+            _log(task_id, f"Querying {' + '.join(active)} for target suggestions...", 21, "Target Discovery")
+            llm_disc = research_discovery_targets(acquirer, thesis, openai_key=openai_key, gemini_key=gemini_key, grok_key=grok_key, nvidia_key=nvidia_key)
+            llm_names = [n for n in llm_disc.get("target_names", []) if _is_valid_target(n)][:8]
             if llm_names:
                 target_names = llm_names
-                # Store discovery context for later use in synergy agents
                 acq_scraped["llm_discovery"] = llm_disc
                 _log(task_id, f"LLM discovery found {len(target_names)} targets: {target_names}", 24, "Target Discovery")
 
@@ -312,11 +353,8 @@ def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Opt
             _log(task_id, f"DDG found {len(raw_snippets)} snippets, extracting names...", 24, "Target Discovery")
             if raw_snippets:
                 extracted    = agent_extract_targets(m, raw_snippets, thesis)
-                target_names = extracted.get("company_names", [])[:4]
+                target_names = [n for n in extracted.get("company_names", [])[:6] if _is_valid_target(n)]
                 rationales   = extracted.get("rationale_per_target", [])
-                target_names = [n for n in target_names if n and len(n.strip()) > 2
-                                and not n.lower().startswith("company")
-                                and not re.match(r"^\d", n.strip())]
 
         _log(task_id, f"Identified {len(target_names)} target candidates: {target_names}", 28, "Target Discovery")
 
@@ -337,12 +375,29 @@ def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Opt
         for i, tname in enumerate(target_names):
             pct = base + i * step_each
             _log(task_id, f"Target {i+1}/{len(target_names)}: Gathering data for {tname}...", pct, f"Target {i+1} · {tname}")
-            tgt_scraped = gather_company_intelligence(tname, openai_key=openai_key, gemini_key=gemini_key)
+            tgt_scraped = gather_company_intelligence(tname, openai_key=openai_key, gemini_key=gemini_key, grok_key=grok_key, nvidia_key=nvidia_key)
             _log(task_id, f"Target {i+1}: Running intelligence agents…", pct + step_each // 3, f"Target {i+1} · {tname}")
             profile = _profile_company(task_id, tname, m, tgt_scraped, base_progress=pct, progress_range=step_each)
             profile["search_rationale"] = rationales[i] if i < len(rationales) else ""
 
-            # ── Step 3: Synergy model ─────────────────────────────────────────
+            # ── Step 3a: LLM-powered synergy model (DeepSeek / OpenAI) ─────────
+            _log(task_id, f"Target {i+1}: LLM synergy research…", pct + step_each - 3, f"Synergy Research · {tname}")
+            llm_synergy: Dict = {}
+            if openai_key or gemini_key or grok_key or nvidia_key:
+                try:
+                    from llm_research import research_synergy_model
+                    llm_synergy = research_synergy_model(
+                        acquirer, tname,
+                        acq_scraped.get("llm_research", {}),
+                        tgt_scraped.get("llm_research", {}),
+                        tgt_scraped.get("deal_intel", {}),
+                        openai_key=openai_key, gemini_key=gemini_key,
+                        grok_key=grok_key, nvidia_key=nvidia_key,
+                    ) or {}
+                except Exception as _se:
+                    print(f"[orchestrator] LLM synergy model failed for {tname}: {_se}")
+
+            # ── Step 3b: Ollama synergy agent (local validation + fill) ──────
             _log(task_id, f"Target {i+1}: Computing synergy model…", pct + step_each - 2, f"Synergy · {tname}")
             synergy = agent_synergy_model(
                 m, acquirer, tname,
@@ -353,6 +408,10 @@ def run_discovery_pipeline(task_id: str, acquirer: str, thesis: Dict, model: Opt
                 profile["financials"],
                 profile["locations"],
                 tgt_scraped.get("financials", {}),
+                target_llm_research=tgt_scraped.get("llm_research", {}),
+                target_deal_intel=tgt_scraped.get("deal_intel", {}),
+                acquirer_llm_research=acq_scraped.get("llm_research", {}),
+                llm_synergy=llm_synergy,
             )
             profile["synergy"] = synergy
             profiled_targets.append(profile)
