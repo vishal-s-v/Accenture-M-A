@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# API keys / secrets
+config.py
+
+# Runtime data — saved analysis reports
+projects/
+
+# Test / scratch outputs
+verify_math.py
+generate_pdf.py
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp

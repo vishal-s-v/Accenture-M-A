@@ -1,0 +1,147 @@
+<svg viewBox="0 0 1100 660" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Segoe UI, sans-serif">
+  <defs>
+    <filter id="s1"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.10"/></filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="660" fill="#FFFFFF"/>
+
+  <!-- ── SIDEBAR ─────────────────────────────────────────────── -->
+  <rect width="272" height="660" fill="#F9F5FF"/>
+  <rect x="271" width="1" height="660" fill="#E0E0E0"/>
+
+  <!-- Sidebar Header -->
+  <rect width="272" height="64" fill="#6900A8"/>
+  <rect y="61" width="272" height="3" fill="#A100FF"/>
+  <text x="16" y="40" font-family="'Space Grotesk', sans-serif" font-size="28" font-weight="700" fill="#FFFFFF">&gt;</text>
+  <text x="50" y="33" font-family="'Space Grotesk', sans-serif" font-size="15" font-weight="700" fill="#FFFFFF">Accenture</text>
+  <text x="50" y="49" font-size="9.5" fill="rgba(255,255,255,0.65)" letter-spacing="1">V&amp;A INTELLIGENCE</text>
+
+  <!-- Mode buttons -->
+  <rect x="8" y="73" width="256" height="36" rx="6" fill="#EDD5FF"/>
+  <rect x="10" y="75" width="126" height="32" rx="5" fill="#FFFFFF" stroke="#A100FF" stroke-width="1.5"/>
+  <text x="73" y="95" font-size="11" font-weight="600" fill="#A100FF" text-anchor="middle">Intelligence Profile</text>
+  <text x="203" y="95" font-size="11" font-weight="500" fill="#6900A8" text-anchor="middle">M&amp;A Discovery</text>
+
+  <!-- Saved Reports -->
+  <text x="16" y="130" font-size="9.5" font-weight="600" fill="#8A8A8A" letter-spacing="0.8">SAVED REPORTS</text>
+  <rect x="8" y="135" width="256" height="30" rx="5" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" filter="url(#s1)"/>
+  <text x="16" y="154" font-size="12" fill="#BABABA">— Select saved report —</text>
+  <text x="252" y="154" font-size="11" fill="#8A8A8A">▾</text>
+
+  <!-- Form section label -->
+  <text x="16" y="184" font-size="9.5" font-weight="600" fill="#8A8A8A" letter-spacing="0.8">INTELLIGENCE PROFILE</text>
+
+  <!-- Company input -->
+  <text x="16" y="203" font-size="11" fill="#4A4A4A">Company Name / URL <tspan fill="#A100FF">*</tspan></text>
+  <rect x="8" y="208" width="256" height="32" rx="5" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" filter="url(#s1)"/>
+  <text x="16" y="228" font-size="11" fill="#C0C0C0">e.g. Infosys BPM or infosys.com/bpm</text>
+
+  <!-- Config card -->
+  <rect x="8" y="248" width="256" height="62" rx="5" fill="#F4F4F4" stroke="#E0E0E0" stroke-width="1"/>
+  <circle cx="24" cy="266" r="8" fill="#A100FF" opacity="0.12"/>
+  <text x="36" y="270" font-size="11.5" fill="#4A4A4A" font-weight="500">Ollama Model</text>
+  <circle cx="253" cy="265" r="4" fill="#00A651"/>
+  <rect x="16" y="277" width="240" height="25" rx="4" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="24" y="294" font-size="12" fill="#1A1A1A">llama3.2:latest</text>
+
+  <!-- Simulate row -->
+  <rect x="8" y="318" width="256" height="42" rx="5" fill="#F9F5FF"/>
+  <text x="16" y="334" font-size="12" fill="#1A1A1A" font-weight="500">Simulation Mode</text>
+  <text x="16" y="350" font-size="10" fill="#8A8A8A">Pre-built sample data, no Ollama required</text>
+  <rect x="228" y="326" width="36" height="18" rx="9" fill="#E0E0E0"/>
+  <circle cx="237" cy="335" r="7" fill="#FFFFFF" filter="url(#s1)"/>
+
+  <!-- Run button -->
+  <rect x="8" y="367" width="256" height="36" rx="6" fill="#A100FF"/>
+  <rect x="8" y="367" width="256" height="36" rx="6" fill="url(#btnGrad)"/>
+  <text x="80" y="388" font-size="12" font-weight="600" fill="#FFFFFF">▶  Run Intelligence Analysis</text>
+
+  <!-- Agent Pipeline -->
+  <text x="16" y="420" font-size="9.5" font-weight="600" fill="#8A8A8A" letter-spacing="0.8">AGENT PIPELINE</text>
+
+  <!-- Node 0 -->
+  <rect x="8" y="426" width="256" height="26" rx="5" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <rect x="8" y="426" width="26" height="26" rx="5" fill="#EBEBEB"/>
+  <text x="21" y="443" font-size="10" font-weight="700" fill="#8A8A8A" text-anchor="middle">0</text>
+  <text x="44" y="443" font-size="10.5" fill="#4A4A4A">Data Acquisition</text>
+  <line x1="136" y1="452" x2="136" y2="458" stroke="#C0C0C0" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Node 1 -->
+  <rect x="8" y="461" width="256" height="26" rx="5" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <rect x="8" y="461" width="26" height="26" rx="5" fill="#EBEBEB"/>
+  <text x="21" y="478" font-size="10" font-weight="700" fill="#8A8A8A" text-anchor="middle">1</text>
+  <text x="44" y="478" font-size="10.5" fill="#4A4A4A">Company Profile</text>
+
+  <!-- Node 2 -->
+  <rect x="8" y="494" width="256" height="26" rx="5" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <rect x="8" y="494" width="26" height="26" rx="5" fill="#EBEBEB"/>
+  <text x="21" y="511" font-size="10" font-weight="700" fill="#8A8A8A" text-anchor="middle">2</text>
+  <text x="44" y="511" font-size="10.5" fill="#4A4A4A">Services &amp; Products</text>
+
+  <!-- Arrow connectors -->
+  <text x="136" y="490" font-size="9" fill="#C0C0C0" text-anchor="middle">↓</text>
+  <text x="136" y="524" font-size="9" fill="#C0C0C0" text-anchor="middle">↓</text>
+
+  <!-- Parallel research group -->
+  <rect x="8" y="529" width="256" height="72" rx="5" fill="#F5E6FF" stroke="#C084FF" stroke-width="1.2"/>
+  <text x="136" y="543" font-size="9" fill="#6900A8" text-anchor="middle" font-weight="600">Parallel Research (Agents 3–8)</text>
+  <rect x="14" y="548" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="51" y="561" font-size="8.5" fill="#4A4A4A" text-anchor="middle">3 · Locations</text>
+  <rect x="97" y="548" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="134" y="561" font-size="8.5" fill="#4A4A4A" text-anchor="middle">4 · Clients</text>
+  <rect x="180" y="548" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="217" y="561" font-size="8.5" fill="#4A4A4A" text-anchor="middle">5 · Financials</text>
+  <rect x="14" y="573" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="51" y="586" font-size="8.5" fill="#4A4A4A" text-anchor="middle">6 · Leadership</text>
+  <rect x="97" y="573" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="134" y="586" font-size="8.5" fill="#4A4A4A" text-anchor="middle">7 · Ext. Intel</text>
+  <rect x="180" y="573" width="74" height="18" rx="3" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="217" y="586" font-size="8.5" fill="#4A4A4A" text-anchor="middle">8 · Workforce</text>
+
+  <text x="136" y="611" font-size="9" fill="#C0C0C0" text-anchor="middle">↓</text>
+
+  <!-- Node 9 (active) -->
+  <rect x="8" y="617" width="256" height="28" rx="5" fill="#F5E6FF" stroke="#A100FF" stroke-width="1.5"/>
+  <rect x="8" y="617" width="26" height="28" rx="5" fill="#A100FF"/>
+  <text x="21" y="635" font-size="10" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+  <text x="44" y="635" font-size="10.5" fill="#6900A8" font-weight="600">Strategic Intelligence</text>
+
+  <!-- ── MAIN CONTENT: Empty State ───────────────────────────── -->
+  <text x="685" y="268" font-family="'Space Grotesk', sans-serif" font-size="52" font-weight="700" fill="#EBEBEB" text-anchor="middle">&gt;</text>
+  <text x="685" y="318" font-family="'Space Grotesk', sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="middle">V&amp;A Intelligence Platform</text>
+  <text x="685" y="344" font-size="13" fill="#8A8A8A" text-anchor="middle">Two modes: build a grounded 11-section company intelligence profile, or run M&amp;A</text>
+  <text x="685" y="362" font-size="13" fill="#8A8A8A" text-anchor="middle">discovery to find acquisition targets and quantify synergies.</text>
+
+  <!-- Section pills row 1 -->
+  <rect x="316" y="386" width="112" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="372" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§1 Business Overview</text>
+  <rect x="436" y="386" width="116" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="494" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§2 Company Overview</text>
+  <rect x="560" y="386" width="84" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="602" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§3 Services</text>
+  <rect x="652" y="386" width="90" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="697" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§4 Locations</text>
+  <rect x="750" y="386" width="76" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="788" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§5 Clients</text>
+  <rect x="834" y="386" width="88" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="878" y="401" font-size="10" fill="#6900A8" text-anchor="middle">§6 Financials</text>
+
+  <!-- Section pills row 2 -->
+  <rect x="316" y="416" width="96" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="364" y="431" font-size="10" fill="#6900A8" text-anchor="middle">§7 Leadership</text>
+  <rect x="420" y="416" width="96" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="468" y="431" font-size="10" fill="#6900A8" text-anchor="middle">§8 Glassdoor</text>
+  <rect x="524" y="416" width="72" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="560" y="431" font-size="10" fill="#6900A8" text-anchor="middle">§9 News</text>
+  <rect x="604" y="416" width="106" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="657" y="431" font-size="10" fill="#6900A8" text-anchor="middle">§10 Workforce</text>
+  <rect x="718" y="416" width="152" height="22" rx="11" fill="#F5E6FF" stroke="#C084FF" stroke-width="1"/>
+  <text x="794" y="431" font-size="10" fill="#6900A8" text-anchor="middle">§11 Strategic Intelligence</text>
+  <rect x="878" y="416" width="102" height="22" rx="11" fill="#6900A8"/>
+  <text x="929" y="431" font-size="10" fill="#FFFFFF" text-anchor="middle">Synergy Model</text>
+
+  <!-- Data sources note -->
+  <rect x="460" y="460" width="450" height="30" rx="6" fill="#F9F5FF" stroke="#E8D5FF" stroke-width="1"/>
+  <text x="685" y="479" font-size="11" fill="#6900A8" text-anchor="middle">🔒  Grounded from: Official website · DuckDuckGo · yfinance · Wikipedia · SEC EDGAR</text>
+</svg>
